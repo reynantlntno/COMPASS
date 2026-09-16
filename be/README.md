@@ -3,8 +3,9 @@
 This directory contains the backend foundation for COMPASS plus the Accounts / Identity
 foundation. It intentionally stops before business workflows: configuration, health, error
 handling, request correlation, rate-limit and idempotency primitives, external-service adapters,
-account identity, capability policy, and local/live-staging container wiring are included. The
-authentication flows, audit trail, organizational scope, and service domains remain deferred.
+account identity, capability policy, an explicit Audit Trail foundation, and local/live-staging
+container wiring are included. The authentication flows, organizational scope, and service domains
+remain deferred.
 
 ## Baseline
 
@@ -19,6 +20,7 @@ authentication flows, audit trail, organizational scope, and service domains rem
 - Custom UUID-based account identity with email as its canonical identifier
 - Explicit roles, designations, capabilities, and account-level capability overrides
 - Private, normalized WebP profile photos through object storage
+- Synchronous, append-only-by-application Audit Trail events in PostgreSQL
 
 The dependency lockfile is committed with this foundation. The chosen Python version is 3.13
 because the current Celery 5.6 support matrix lists CPython 3.9 through 3.13; host Python 3.14
@@ -75,6 +77,41 @@ Use `--password-stdin` for a controlled non-interactive deployment. Re-running p
 safe; it updates known definitions, adds missing baseline grants, and retains unknown database
 rows. `create_it_admin` refuses an existing account unless `--idempotent` is explicitly supplied.
 
+## Audit Trail development
+
+The Audit Trail records meaningful business and security actions for accountability. It is separate
+from structured operational logs, HTTP access logs, and domain records. There is no audit read API
+yet; future domains must record sensitive reads explicitly at their service/use-case boundary.
+
+Record an event directly and keep a successful state change and its `SUCCESS` event in the same
+`transaction.atomic()` block:
+
+```python
+from django.db import transaction
+
+from compass.audit import record
+from compass.audit.context import AuditContext
+from compass.audit.models import AuditEvent
+
+with transaction.atomic():
+    user.save(update_fields=["first_name", "updated_at"])
+    record(
+        context=AuditContext.from_request(request),
+        action="accounts.updated",
+        outcome=AuditEvent.Outcome.SUCCESS,
+        target_type="accounts.user",
+        target_id=user.pk,
+        metadata={"changed_fields": ["first_name"]},
+    )
+```
+
+Use `AuditContext.system()` for management commands and internal processes, and
+`AuditContext.anonymous()` for meaningful unauthenticated security events. Metadata must be a
+small, explicit JSON object; never include passwords, hashes, tokens, credentials, request or
+response bodies, or confidential counseling content. Audit events cannot be edited or deleted
+through normal application ORM paths. Retention, tamper-proof storage, and capability-scoped
+audit viewing are deferred to later policy and domain work.
+
 ## Live-staging outline
 
 Create a deployment-only `.env` from the same settings contract and set:
@@ -110,6 +147,7 @@ uv sync
 uv run ruff format --check .
 uv run ruff check .
 uv run pytest
+uv run pytest tests/test_audit.py
 uv run python manage.py check
 uv run python manage.py makemigrations --check --dry-run
 ```
@@ -134,14 +172,17 @@ the Compose services when deployment automation is introduced.
   uniqueness constraints and is not attached to an endpoint yet.
 - Storage and email calls go through app-facing adapters. Durable uploads are not written to the
   container filesystem.
+- Audit events are synchronous PostgreSQL writes through one explicit service. They carry the
+  existing request ID, trusted client IP, bounded user-agent summary, actor, outcome, target, and
+  small deliberate metadata; they do not replace operational logging.
 
 ## Decisions
 
 See [`docs/decisions/`](docs/decisions/) for the foundation ADRs, including the deliberate choices
 to use Django Ninja, omit admin, keep PostgreSQL authoritative, separate Redis concerns, abstract
 S3-compatible storage, separate capability from future scope, use one environment-driven settings
-module, propagate correlation IDs, define idempotency semantics, and establish explicit account
-identity policy.
+module, propagate correlation IDs, define idempotency semantics, establish explicit account
+identity policy, and keep Audit Trail recording explicit and separate from operational logs.
 
 ## Known verification gaps
 

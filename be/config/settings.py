@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.staticfiles",
     "compass.accounts",
+    "compass.audit",
 ]
 
 AUTH_USER_MODEL = "accounts.User"

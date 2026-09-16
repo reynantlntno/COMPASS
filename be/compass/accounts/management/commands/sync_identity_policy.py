@@ -19,6 +19,10 @@ from compass.accounts.policy import (
     ROLE_CAPABILITY_GRANTS,
     ROLE_DEFINITIONS,
 )
+from compass.audit.actions import IDENTITY_POLICY_SYNCED
+from compass.audit.context import AuditContext
+from compass.audit.models import AuditOutcome
+from compass.audit.services import record_event
 
 
 def _sync_definition(model, definition) -> tuple[object, str]:
@@ -101,6 +105,14 @@ class Command(BaseCommand):
                     )
                     if created:
                         counts["designation_grants_created"] += 1
+
+            if any(counts.values()):
+                record_event(
+                    context=AuditContext.system(),
+                    action=IDENTITY_POLICY_SYNCED,
+                    outcome=AuditOutcome.SUCCESS,
+                    metadata=counts,
+                )
 
         self.stdout.write("Identity policy synchronization complete.")
         self.stdout.write(

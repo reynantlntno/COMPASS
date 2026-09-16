@@ -11,6 +11,10 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import IntegrityError, transaction
 
 from compass.accounts.models import Role, User
+from compass.audit.actions import ACCOUNT_CREATED
+from compass.audit.context import AuditContext
+from compass.audit.models import AuditOutcome
+from compass.audit.services import record_event
 
 
 class Command(BaseCommand):
@@ -85,20 +89,35 @@ class Command(BaseCommand):
         except ValidationError as exc:
             raise CommandError("password rejected: " + "; ".join(exc.messages)) from exc
 
-        try:
-            with transaction.atomic():
-                User.objects.create_user(
-                    email=email,
-                    password=password,
-                    role=role,
-                    first_name=options["first_name"],
-                    middle_name=options["middle_name"],
-                    last_name=options["last_name"],
-                    suffix=options["suffix"],
+        with transaction.atomic():
+            try:
+                with transaction.atomic():
+                    user = User.objects.create_user(
+                        email=email,
+                        password=password,
+                        role=role,
+                        first_name=options["first_name"],
+                        middle_name=options["middle_name"],
+                        last_name=options["last_name"],
+                        suffix=options["suffix"],
+                    )
+            except IntegrityError as exc:
+                raise CommandError(
+                    "the IT_ADMIN account could not be created because the email is already in use"
+                ) from exc
+            try:
+                record_event(
+                    context=AuditContext.system(),
+                    action=ACCOUNT_CREATED,
+                    outcome=AuditOutcome.SUCCESS,
+                    target_type="accounts.user",
+                    target_id=user.pk,
+                    metadata={"role": role.code},
                 )
-        except IntegrityError as exc:
-            raise CommandError(
-                "the IT_ADMIN account could not be created because the email is already in use"
-            ) from exc
+            except IntegrityError as exc:
+                raise CommandError(
+                    "the IT_ADMIN account could not be created because its audit event "
+                    "could not be recorded"
+                ) from exc
 
         self.stdout.write(self.style.SUCCESS("IT_ADMIN account created successfully."))
