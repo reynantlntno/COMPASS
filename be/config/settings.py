@@ -47,6 +47,7 @@ INSTALLED_APPS = [
     "compass.accounts",
     "compass.audit",
     "compass.authentication",
+    "compass.organization",
 ]
 
 AUTH_USER_MODEL = "accounts.User"
