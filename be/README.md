@@ -1,7 +1,7 @@
 # COMPASS backend foundation
 
 This directory contains the backend foundation for COMPASS plus Accounts / Identity, Audit Trail,
-and Authentication / Account Security foundations. It intentionally stops before business
+Authentication / Account Security, and self-activity projections. It intentionally stops before business
 workflows: configuration, health, error handling, request correlation, rate-limit and idempotency
 primitives, external-service adapters, account identity, capability policy, server-managed
 authentication, and local/live-staging container wiring are included. Organizational scope and
@@ -25,6 +25,7 @@ service domains remain deferred.
 - HttpOnly cookie authentication with Django CSRF protection
 - Explicit PyOTP TOTP MFA, hashed recovery codes, trusted sessions, and recent-MFA state
 - Internal email OTP challenge storage and Celery delivery boundary
+- Curated self-only My Activity and Security Activity projections over AuditEvent
 
 The dependency lockfile is committed with this foundation. The chosen Python version is 3.13
 because the current Celery 5.6 support matrix lists CPython 3.9 through 3.13; host Python 3.14
@@ -89,6 +90,8 @@ POST /api/v1/auth/mfa/totp/setup
 POST /api/v1/auth/mfa/totp/confirm
 POST /api/v1/auth/mfa/totp/verify
 POST /api/v1/auth/mfa/totp/disable
+GET  /api/v1/me/activity?page=1&page_size=20
+GET  /api/v1/me/security-activity?page=1&page_size=20
 ```
 
 TOTP setup is a two-step operation: call `setup`, scan the returned provisioning URI, then call
@@ -162,6 +165,22 @@ small, explicit JSON object; never include passwords, hashes, tokens, credential
 response bodies, or confidential counseling content. Audit events cannot be edited or deleted
 through normal application ORM paths. Retention, tamper-proof storage, and capability-scoped
 audit viewing are deferred to later policy and domain work.
+
+## My Activity and Security Activity
+
+The two authenticated `/api/v1/me/*` endpoints are presentation projections over the existing
+AuditEvent table; they do not create an ActivityLog table, copy events, or mutate audit rows. Each
+feed uses an explicit action/presenter allowlist, so new audit actions remain hidden until a safe
+human-readable presentation is intentionally registered. My Activity is the broader account feed;
+Security Activity includes selected authentication history such as successful/known-account failed
+sign-ins, session creation/revocation, MFA enrollment, recovery-code use, and trusted-browser
+changes. Internal policy synchronization, email OTP operations, raw MFA verification attempts, and
+unknown actions remain hidden.
+
+Responses contain only `id`, stable `type`, neutral `title`/`description`, `occurred_at`, and
+bounded pagination fields. Raw audit metadata, actor/target internals, request IDs, IP addresses,
+user-agent values, credentials, and security tokens are excluded. Pagination is newest-first with
+`page_size` limited to 50, and the endpoints never accept a user ID or audit search filter.
 
 ## Live-staging outline
 
