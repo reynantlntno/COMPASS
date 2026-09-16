@@ -150,9 +150,16 @@ def issue_email_otp(
     limiter=None,
     turnstile_token: str | None = None,
     dispatch: bool = True,
+    replace_existing: bool = False,
     now: datetime | None = None,
 ) -> EmailOTPIssue:
-    """Create an email OTP without exposing its plaintext to callers or persistence."""
+    """Create an email OTP without exposing its plaintext to callers or persistence.
+
+    ``replace_existing`` is used by password access so that one account/email has only one
+    outstanding challenge for the selected purpose. The replacement and insert occur in the
+    same transaction; callers that need account-level serialization should lock the user row
+    before calling this function.
+    """
 
     normalized_email = _normalize_email(email)
     normalized_purpose = _validate_purpose(purpose)
@@ -174,8 +181,18 @@ def issue_email_otp(
     current = now or timezone.now()
     code = _new_code()
     with transaction.atomic():
+        locked_user = user if getattr(user, "pk", None) else None
+        if replace_existing:
+            if locked_user is not None:
+                locked_user = type(locked_user).objects.select_for_update().get(pk=locked_user.pk)
+            invalidate_email_otp_challenges(
+                user_id=locked_user.pk if locked_user is not None else None,
+                email=normalized_email,
+                purposes=(normalized_purpose,),
+                now=current,
+            )
         challenge = EmailOTPChallenge.objects.create(
-            user=user if getattr(user, "pk", None) else None,
+            user=locked_user,
             email=normalized_email,
             purpose=normalized_purpose,
             code_hash=make_password(code),
@@ -186,7 +203,7 @@ def issue_email_otp(
             request_id=getattr(request, "request_id", None),
         )
         record_event(
-            context=_context(request=request, user=user),
+            context=_context(request=request, user=locked_user),
             action=AUTH_EMAIL_OTP_ISSUED,
             outcome="SUCCESS",
             target_type="auth.emailotp",
@@ -288,42 +305,87 @@ def consume_email_otp(
     invalid = False
     with transaction.atomic():
         challenge = EmailOTPChallenge.objects.select_for_update().get(pk=challenge_id)
-        context = _context(request=request, user=challenge.user)
-        normalized = code.strip() if isinstance(code, str) else ""
-        candidate = normalized if EMAIL_OTP_CODE_RE.fullmatch(normalized) else ""
-        usable = (
-            challenge.consumed_at is None
-            and challenge.expires_at > current
-            and challenge.failed_attempt_count < settings.AUTH_EMAIL_OTP_MAX_ATTEMPTS
+        valid = _verify_email_otp_locked(
+            challenge=challenge,
+            code=code,
+            request=request,
+            current=current,
         )
-        valid = usable and check_password(candidate, challenge.code_hash)
         if not valid:
-            if usable:
-                challenge.failed_attempt_count += 1
-                challenge.save(update_fields=["failed_attempt_count"])
-            record_event(
-                context=context,
-                action=AUTH_EMAIL_OTP_FAILED,
-                outcome="DENIED",
-                target_type="auth.emailotp",
-                target_id=challenge.pk,
-                metadata={"purpose": challenge.purpose},
-            )
             invalid = True
         else:
-            challenge.consumed_at = current
-            challenge.save(update_fields=["consumed_at"])
-            record_event(
-                context=context,
-                action=AUTH_EMAIL_OTP_CONSUMED,
-                outcome="SUCCESS",
-                target_type="auth.emailotp",
-                target_id=challenge.pk,
-                metadata={"purpose": challenge.purpose},
+            _consume_email_otp_locked(
+                challenge=challenge,
+                request=request,
+                current=current,
             )
     if invalid:
         raise EmailOTPInvalid("email OTP challenge is unavailable")
     return challenge
+
+
+def _verify_email_otp_locked(
+    *,
+    challenge: EmailOTPChallenge,
+    code: str,
+    request=None,
+    current: datetime,
+    expected_purpose: str | EmailOTPPurpose | None = None,
+) -> bool:
+    """Verify a locked challenge without consuming a valid code.
+
+    This is intentionally private and only safe while the caller owns the challenge row lock
+    inside an outer transaction. Invalid attempts are still counted and audited here so generic
+    OTP consumption and password completion share exactly one verification implementation.
+    """
+
+    normalized_purpose = (
+        _validate_purpose(expected_purpose) if expected_purpose is not None else None
+    )
+    context = _context(request=request, user=challenge.user)
+    normalized = code.strip() if isinstance(code, str) else ""
+    candidate = normalized if EMAIL_OTP_CODE_RE.fullmatch(normalized) else ""
+    usable = (
+        challenge.consumed_at is None
+        and challenge.expires_at > current
+        and challenge.failed_attempt_count < settings.AUTH_EMAIL_OTP_MAX_ATTEMPTS
+        and (normalized_purpose is None or challenge.purpose == normalized_purpose)
+    )
+    valid = usable and check_password(candidate, challenge.code_hash)
+    if valid:
+        return True
+
+    if usable:
+        challenge.failed_attempt_count += 1
+        challenge.save(update_fields=["failed_attempt_count"])
+    record_event(
+        context=context,
+        action=AUTH_EMAIL_OTP_FAILED,
+        outcome="DENIED",
+        target_type="auth.emailotp",
+        target_id=challenge.pk,
+        metadata={"purpose": challenge.purpose},
+    )
+    return False
+
+
+def _consume_email_otp_locked(
+    *, challenge: EmailOTPChallenge, request=None, current: datetime
+) -> None:
+    """Consume a verified challenge while its row lock is held."""
+
+    if challenge.consumed_at is not None:
+        raise EmailOTPInvalid("email OTP challenge is unavailable")
+    challenge.consumed_at = current
+    challenge.save(update_fields=["consumed_at"])
+    record_event(
+        context=_context(request=request, user=challenge.user),
+        action=AUTH_EMAIL_OTP_CONSUMED,
+        outcome="SUCCESS",
+        target_type="auth.emailotp",
+        target_id=challenge.pk,
+        metadata={"purpose": challenge.purpose},
+    )
 
 
 __all__ = [

@@ -51,6 +51,27 @@ INSTALLED_APPS = [
 
 AUTH_USER_MODEL = "accounts.User"
 
+# Passwords are user-chosen credentials, including for the self-service initial setup and
+# recovery flow. Django's built-in validators provide length and common-password screening
+# without brittle composition rules. Fifteen characters follows current guidance for passwords
+# that may be used as a single factor; MFA remains an additional account policy rather than a
+# reason to weaken the shared baseline.
+AUTH_PASSWORD_VALIDATORS = [
+    {
+        "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",
+    },
+    {
+        "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
+        "OPTIONS": {"min_length": 15},
+    },
+    {
+        "NAME": "django.contrib.auth.password_validation.CommonPasswordValidator",
+    },
+    {
+        "NAME": "django.contrib.auth.password_validation.NumericPasswordValidator",
+    },
+]
+
 MIDDLEWARE = [
     "compass.common.middleware.RequestContextMiddleware",
     "django.middleware.security.SecurityMiddleware",

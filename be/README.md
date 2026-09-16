@@ -28,6 +28,7 @@ deferred.
 - Internal email OTP challenge storage and Celery delivery boundary
 - Curated self-only My Activity and Security Activity projections over AuditEvent
 - Capability-authorized administrative Account Management with recent-MFA step-up
+- Self-service initial password setup and password recovery through email OTP
 
 The dependency lockfile is committed with this foundation. The chosen Python version is 3.13
 because the current Celery 5.6 support matrix lists CPython 3.9 through 3.13; host Python 3.14
@@ -85,6 +86,8 @@ remain `HttpOnly`; only Django's CSRF cookie is readable by the SPA pattern. Use
 
 ```text
 POST /api/v1/auth/login
+POST /api/v1/auth/password/request
+POST /api/v1/auth/password/confirm
 POST /api/v1/auth/logout
 GET  /api/v1/auth/session
 GET  /api/v1/auth/sessions
@@ -102,14 +105,18 @@ secret and one-way recovery-code hashes. The current default does not require MF
 but an enrolled factor causes MFA at the next password login. Role-specific mandatory MFA can be
 configured with `AUTH_MFA_REQUIRED_ROLE_CODES`; the setting remains separate from capabilities.
 
-Email OTP is intentionally an internal foundation rather than a public recovery API. Its challenge
-row stores only a hash, and issuance/resend delivery is queued through the existing Celery + SMTP
-adapter. For local delivery checks, inspect Mailpit after exercising the internal service boundary;
-password-reset and full account-recovery workflows are deferred. Trusted sessions are listed and
-revoked through the authenticated `/api/v1/auth/trusted-sessions` routes, while future account and
-security-reset services can call the explicit revocation primitives directly. MFA disable and
-recovery-code regeneration require recent MFA; `AUTH_RECENT_MFA_WINDOW_SECONDS` controls the
-window.
+Email OTP challenge rows store only a hash, and delivery is queued through the existing Celery +
+SMTP adapter. `POST /api/v1/auth/password/request` returns the same `202` response shape for
+eligible, disabled, and unknown email addresses; only an active known account receives a real
+email, while other requests receive a non-dispatched decoy challenge. A new request invalidates
+older recovery challenges for that email. `POST /api/v1/auth/password/confirm` verifies the
+challenge and sets the user-selected password atomically, without creating a session. Password
+setup/reset revokes reusable sessions, trusted sessions, login challenges, and other recovery
+challenges, while preserving TOTP and MFA recovery codes. Users must then sign in through the
+normal password + MFA flow. Passwords use Django's built-in validators and are never placed in
+responses, logs, or audit metadata. Trusted sessions are listed and revoked through the
+authenticated `/api/v1/auth/trusted-sessions` routes. MFA disable and recovery-code regeneration
+require recent MFA; `AUTH_RECENT_MFA_WINDOW_SECONDS` controls the window.
 
 The `minio-init` service creates the configured bucket and explicitly keeps it private. Re-run
 it after the MinIO service is available if the bucket needs to be bootstrapped again:

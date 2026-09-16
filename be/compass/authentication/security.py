@@ -1,7 +1,8 @@
-"""Reusable account-security state invalidation for administrative workflows."""
+"""Reusable authentication-state invalidation for account-security workflows."""
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -28,21 +29,23 @@ class AuthStateInvalidation:
     invalidated_email_challenge_count: int = 0
 
 
-def invalidate_auth_state_after_authority_change(
+def invalidate_reusable_auth_state(
     *,
     user_id,
     context: AuditContext,
     reason: str,
     now: datetime | None = None,
-    invalidate_email_security_challenges: bool = False,
-    previous_email: str | None = None,
+    email_challenge_purposes: Iterable[str | EmailOTPPurpose] | None = None,
+    email_challenge_email: str | None = None,
 ) -> AuthStateInvalidation:
-    """Revoke reusable authentication state after a controlled account mutation.
+    """Revoke reusable authentication state after a controlled account-security mutation.
 
     The caller normally invokes this inside the account mutation's outer transaction. The
     nested transaction here also keeps direct callers safe, while PostgreSQL row locks in the
     existing session services protect competing revocations. TOTP factors and recovery codes
-    are deliberately untouched; MFA reset has a separate low-level operation.
+    are deliberately untouched; MFA reset has a separate low-level operation. Password
+    setup/reset can optionally invalidate only the requested email-OTP purposes in the same
+    transaction.
     """
 
     current = now or timezone.now()
@@ -64,11 +67,11 @@ def invalidate_auth_state_after_authority_change(
             now=current,
         )
         invalidated_email_challenge_count = 0
-        if invalidate_email_security_challenges:
+        if email_challenge_purposes is not None:
             invalidated_email_challenge_count = invalidate_email_otp_challenges(
                 user_id=user_id,
-                email=previous_email,
-                purposes=(EmailOTPPurpose.SECURITY_CHALLENGE, EmailOTPPurpose.RECOVERY),
+                email=email_challenge_email,
+                purposes=email_challenge_purposes,
                 now=current,
             )
     return AuthStateInvalidation(
@@ -79,7 +82,34 @@ def invalidate_auth_state_after_authority_change(
     )
 
 
+def invalidate_auth_state_after_authority_change(
+    *,
+    user_id,
+    context: AuditContext,
+    reason: str,
+    now: datetime | None = None,
+    invalidate_email_security_challenges: bool = False,
+    previous_email: str | None = None,
+) -> AuthStateInvalidation:
+    """Compatibility wrapper for administrative authority and identity mutations."""
+
+    purposes = (
+        (EmailOTPPurpose.SECURITY_CHALLENGE, EmailOTPPurpose.RECOVERY)
+        if invalidate_email_security_challenges
+        else None
+    )
+    return invalidate_reusable_auth_state(
+        user_id=user_id,
+        context=context,
+        reason=reason,
+        now=now,
+        email_challenge_purposes=purposes,
+        email_challenge_email=previous_email,
+    )
+
+
 __all__ = [
     "AuthStateInvalidation",
     "invalidate_auth_state_after_authority_change",
+    "invalidate_reusable_auth_state",
 ]

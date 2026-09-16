@@ -24,6 +24,8 @@ EXPECTED_OPERATION_IDS = {
     "healthReady",
     "authGetCsrf",
     "authLogin",
+    "authRequestPasswordAccess",
+    "authConfirmPasswordAccess",
     "authVerifyLoginMfa",
     "authLogout",
     "authGetSession",
@@ -165,6 +167,10 @@ def test_core_schemas_and_realistic_error_responses_are_typed() -> None:
         "AccountDetailResponse",
         "AccountListResponse",
         "ActivityPageResponse",
+        "PasswordAccessRequest",
+        "PasswordAccessRequestResponse",
+        "PasswordAccessConfirmRequest",
+        "PasswordAccessConfirmResponse",
         "LoginRequest",
         "LoginResponse",
         "SessionListResponse",
@@ -181,6 +187,12 @@ def test_core_schemas_and_realistic_error_responses_are_typed() -> None:
     assert _operation(schema, "/api/v1/auth/login", "post")["requestBody"]["content"][
         "application/json"
     ]["schema"]["$ref"].endswith("/LoginRequest")
+    assert _operation(schema, "/api/v1/auth/password/request", "post")["requestBody"]["content"][
+        "application/json"
+    ]["schema"]["$ref"].endswith("/PasswordAccessRequest")
+    assert _operation(schema, "/api/v1/auth/password/confirm", "post")["requestBody"]["content"][
+        "application/json"
+    ]["schema"]["$ref"].endswith("/PasswordAccessConfirmRequest")
     assert "password" not in schemas["AccountCreateRequest"]["properties"]
     assert {"email", "first_name", "last_name", "role"} <= set(
         schemas["AccountCreateRequest"]["required"]
@@ -190,6 +202,22 @@ def test_core_schemas_and_realistic_error_responses_are_typed() -> None:
     assert _response_statuses(_operation(schema, "/api/v1/auth/login", "post")) >= {
         200,
         401,
+        403,
+        422,
+        429,
+        503,
+    }
+    assert _response_statuses(_operation(schema, "/api/v1/auth/password/request", "post")) >= {
+        202,
+        400,
+        403,
+        422,
+        429,
+        503,
+    }
+    assert _response_statuses(_operation(schema, "/api/v1/auth/password/confirm", "post")) >= {
+        200,
+        400,
         403,
         422,
         429,

@@ -9,7 +9,7 @@ from django.conf import settings
 from django.http import HttpResponse
 from django.middleware.csrf import get_token
 from django.utils import timezone
-from ninja import Router, Schema
+from ninja import Router, Schema, Status
 from ninja.security import APIKeyCookie
 from ninja.utils import check_csrf
 
@@ -18,6 +18,7 @@ from compass.authentication.abuse import (
     AuthenticationAbuseUnavailable,
     AuthenticationRateLimited,
 )
+from compass.authentication.email_otp import EmailOTPInvalid, EmailOTPSecurityUnavailable
 from compass.authentication.mfa import (
     TOTPAlreadyConfigured,
     TOTPEnrollmentMissing,
@@ -29,6 +30,15 @@ from compass.authentication.mfa import (
     verify_totp_for_session,
 )
 from compass.authentication.models import AuthSession, TrustedSession
+from compass.authentication.password_access import (
+    PASSWORD_ACCESS_MESSAGE,
+    PASSWORD_CHALLENGE_INVALID_MESSAGE,
+    InvalidPasswordAccessRequest,
+    PasswordChallengeInvalid,
+    PasswordPolicyRejected,
+    confirm_password_access,
+    request_password_access,
+)
 from compass.authentication.services import (
     AuthenticationUnavailable,
     InvalidLoginChallenge,
@@ -87,6 +97,27 @@ class MFARequest(Schema):
 class LoginMFARequest(Schema):
     method: str
     code: str
+
+
+class PasswordAccessRequest(Schema):
+    email: str
+    turnstile_token: str | None = None
+
+
+class PasswordAccessRequestResponse(Schema):
+    challenge_id: UUID
+    expires_at: datetime
+    message: str
+
+
+class PasswordAccessConfirmRequest(Schema):
+    challenge_id: UUID
+    code: str
+    new_password: str
+
+
+class PasswordAccessConfirmResponse(Schema):
+    password_set: bool
 
 
 class SessionSummary(Schema):
@@ -347,6 +378,19 @@ def _raise_invalid_mfa(exc: Exception) -> None:
     raise APIError(400, "mfa_failed", "The MFA response could not be verified.") from exc
 
 
+def _raise_password_challenge_invalid(exc: Exception) -> None:
+    raise APIError(400, "password_challenge_invalid", PASSWORD_CHALLENGE_INVALID_MESSAGE) from exc
+
+
+def _raise_password_policy(exc: PasswordPolicyRejected) -> None:
+    raise APIError(
+        422,
+        "password_policy_failed",
+        str(exc),
+        details=[issue.as_dict() for issue in exc.issues],
+    ) from exc
+
+
 @router.get(
     "/csrf",
     response=CSRFResponse,
@@ -389,6 +433,90 @@ def login(request, payload: LoginRequest, response: HttpResponse):
     if result.status == "mfa_setup_required":
         raise APIError(403, "mfa_setup_required", "Additional account security setup is required.")
     return _login_response(result)
+
+
+@router.post(
+    "/password/request",
+    response=response_with_errors(
+        PasswordAccessRequestResponse,
+        400,
+        403,
+        422,
+        429,
+        503,
+        success_status=202,
+    ),
+    operation_id="authRequestPasswordAccess",
+    summary="Request password setup or recovery",
+    description=(
+        "Request a one-time email security code for initial password setup or password recovery. "
+        "The response is intentionally the same for eligible, disabled, and unknown accounts."
+    ),
+)
+def password_request(request, payload: PasswordAccessRequest):
+    _require_csrf(request)
+    try:
+        result = request_password_access(
+            email=payload.email,
+            request=request,
+            turnstile_token=payload.turnstile_token,
+        )
+    except AuthenticationRateLimited as exc:
+        _raise_rate_limited(exc)
+    except AuthenticationAbuseUnavailable as exc:
+        _raise_security_unavailable(exc)
+    except InvalidPasswordAccessRequest as exc:
+        raise APIError(422, "invalid_password_request", str(exc)) from exc
+    except EmailOTPSecurityUnavailable as exc:
+        _raise_security_unavailable(exc)
+    except EmailOTPInvalid as exc:
+        raise APIError(
+            403,
+            "security_verification_failed",
+            "The security verification could not be completed.",
+        ) from exc
+    except Exception as exc:
+        _raise_security_unavailable(exc)
+    return Status(
+        202,
+        {
+            "challenge_id": result.challenge.pk,
+            "expires_at": result.challenge.expires_at,
+            "message": PASSWORD_ACCESS_MESSAGE,
+        },
+    )
+
+
+@router.post(
+    "/password/confirm",
+    response=response_with_errors(PasswordAccessConfirmResponse, 400, 403, 422, 429, 503),
+    operation_id="authConfirmPasswordAccess",
+    summary="Complete password setup or recovery",
+    description=(
+        "Atomically verify the email security code and establish or replace the password. "
+        "Successful completion does not create an authentication session."
+    ),
+)
+def password_confirm(request, payload: PasswordAccessConfirmRequest):
+    _require_csrf(request)
+    try:
+        result = confirm_password_access(
+            challenge_id=payload.challenge_id,
+            code=payload.code,
+            new_password=payload.new_password,
+            request=request,
+        )
+    except AuthenticationRateLimited as exc:
+        _raise_rate_limited(exc)
+    except AuthenticationAbuseUnavailable as exc:
+        _raise_security_unavailable(exc)
+    except PasswordChallengeInvalid as exc:
+        _raise_password_challenge_invalid(exc)
+    except PasswordPolicyRejected as exc:
+        _raise_password_policy(exc)
+    except Exception as exc:
+        _raise_security_unavailable(exc)
+    return {"password_set": result.password_set}
 
 
 @router.post(

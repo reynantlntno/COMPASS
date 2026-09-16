@@ -30,6 +30,8 @@ from compass.authentication.actions import (
     AUTH_MFA_RECOVERY_CODES_REGENERATED,
     AUTH_MFA_TOTP_DISABLED,
     AUTH_MFA_TOTP_ENROLLED,
+    AUTH_PASSWORD_INITIAL_SET,
+    AUTH_PASSWORD_RESET,
     AUTH_SESSION_CREATED,
     AUTH_SESSION_REVOKED,
     AUTH_TRUSTED_SESSION_CREATED,
@@ -204,6 +206,18 @@ MY_ACTIVITY_PRESENTERS: dict[str, ActivityPresenter] = {
         item_type="auth.mfa.recovery.codes.regenerated",
         title="Recovery codes regenerated",
         description="Your previous recovery codes were replaced.",
+        target_type=ACCOUNT_TARGET,
+    ),
+    AUTH_PASSWORD_INITIAL_SET: _presenter(
+        item_type=AUTH_PASSWORD_INITIAL_SET,
+        title="Password set",
+        description="Your COMPASS account password was created.",
+        target_type=ACCOUNT_TARGET,
+    ),
+    AUTH_PASSWORD_RESET: _presenter(
+        item_type=AUTH_PASSWORD_RESET,
+        title="Password reset",
+        description="Your COMPASS account password was changed using account recovery.",
         target_type=ACCOUNT_TARGET,
     ),
     AUTH_TRUSTED_SESSION_CREATED: _presenter(

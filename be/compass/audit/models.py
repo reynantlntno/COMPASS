@@ -13,8 +13,8 @@ from django.utils import timezone
 
 from compass.audit.metadata import validate_metadata
 
-ACTION_PATTERN = r"^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)+$"
-TARGET_TYPE_PATTERN = ACTION_PATTERN
+ACTION_PATTERN = r"^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$"
+TARGET_TYPE_PATTERN = r"^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)+$"
 ACTION_RE = re.compile(ACTION_PATTERN, re.ASCII)
 TARGET_TYPE_RE = re.compile(TARGET_TYPE_PATTERN, re.ASCII)
 MAX_ACTION_LENGTH = 128
