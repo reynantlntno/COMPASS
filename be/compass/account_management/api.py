@@ -27,6 +27,7 @@ from .services import (
     LastAccountManagerError,
     ManagementConfigurationError,
     ManagementNotAuthorized,
+    OrganizationRelationshipConflict,
     PaginationError,
     SelfTargetForbidden,
     assign_designation,
@@ -181,6 +182,12 @@ def _raise_management_error(exc: AccountManagementError) -> NoReturn:
             409,
             "last_account_manager",
             "The operation must leave at least one active account manager.",
+        ) from exc
+    if isinstance(exc, OrganizationRelationshipConflict):
+        raise APIError(
+            409,
+            "organization_relationship_conflict",
+            str(exc),
         ) from exc
     if isinstance(exc, SelfTargetForbidden):
         raise APIError(
