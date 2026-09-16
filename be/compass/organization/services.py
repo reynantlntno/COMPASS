@@ -403,13 +403,24 @@ def set_college_active(*, college_id: UUID, is_active: bool, context: AuditConte
         return college
 
 
-def _lock_active_user(user_id: UUID, role_code: str, label: str) -> User:
+def _lock_user_with_role(
+    user_id: UUID,
+    role_code: str,
+    label: str,
+    *,
+    require_active: bool,
+) -> User:
     user = User.objects.select_for_update().select_related("role").filter(pk=user_id).first()
     if user is None:
         raise OrganizationNotFound(f"The requested {label} was not found.")
-    if not user.is_active or user.role.code != role_code:
-        raise InvalidOrganizationInput(f"The {label} must be an active {role_code}.")
+    if user.role.code != role_code or (require_active and not user.is_active):
+        qualifier = "an active " if require_active else "a "
+        raise InvalidOrganizationInput(f"The {label} must be {qualifier}{role_code}.")
     return user
+
+
+def _lock_active_user(user_id: UUID, role_code: str, label: str) -> User:
+    return _lock_user_with_role(user_id, role_code, label, require_active=True)
 
 
 def _lock_active_college(college_id: UUID) -> College:
@@ -459,7 +470,7 @@ def set_student_affiliation(*, student_id: UUID, college_id: UUID, context: Audi
 
 def remove_student_affiliation(*, student_id: UUID, context: AuditContext) -> bool:
     with transaction.atomic():
-        _lock_active_user(student_id, "STUDENT", "student")
+        _lock_user_with_role(student_id, "STUDENT", "student", require_active=False)
         current = StudentAffiliation.objects.select_for_update().filter(student_id=student_id).first()
         if current is None:
             return False
@@ -573,7 +584,12 @@ def set_staff_supervisor(*, staff_id: UUID, supervisor_id: UUID, context: AuditC
 
 def remove_staff_supervisor(*, staff_id: UUID, context: AuditContext) -> bool:
     with transaction.atomic():
-        _lock_active_user(staff_id, "GUIDANCE_SERVICES_STAFF", "staff member")
+        _lock_user_with_role(
+            staff_id,
+            "GUIDANCE_SERVICES_STAFF",
+            "staff member",
+            require_active=False,
+        )
         current = StaffSupervision.objects.select_for_update().filter(staff_id=staff_id).first()
         if current is None:
             return False
