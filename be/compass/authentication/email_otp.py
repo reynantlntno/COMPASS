@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import re
 import secrets
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from django.conf import settings
 from django.contrib.auth.hashers import check_password, make_password
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from compass.audit.context import AuditContext
@@ -75,6 +77,40 @@ def _validate_purpose(purpose: str | EmailOTPPurpose) -> str:
     if normalized not in EmailOTPPurpose.values:
         raise ValueError("unknown email OTP purpose")
     return normalized
+
+
+def invalidate_email_otp_challenges(
+    *,
+    user_id=None,
+    email: str | None = None,
+    purposes: Iterable[str | EmailOTPPurpose] | None = None,
+    now: datetime | None = None,
+) -> int:
+    """Invalidate outstanding email challenges without deleting their hash-only records."""
+
+    if user_id is None and email is None:
+        raise ValueError("user_id or email is required")
+    current = now or timezone.now()
+    filters = Q(consumed_at__isnull=True)
+    if user_id is not None and email is not None:
+        filters &= Q(user_id=user_id) | Q(email=_normalize_email(email))
+    elif user_id is not None:
+        filters &= Q(user_id=user_id)
+    else:
+        filters &= Q(email=_normalize_email(email))
+    if purposes is not None:
+        normalized_purposes = tuple(_validate_purpose(purpose) for purpose in purposes)
+        if not normalized_purposes:
+            return 0
+        filters &= Q(purpose__in=normalized_purposes)
+
+    count = 0
+    challenges = EmailOTPChallenge.objects.select_for_update().filter(filters)
+    for challenge in challenges:
+        challenge.consumed_at = current
+        challenge.save(update_fields=["consumed_at"])
+        count += 1
+    return count
 
 
 def _new_code() -> str:
@@ -297,6 +333,7 @@ __all__ = [
     "EmailOTPResendLimitReached",
     "EmailOTPResendTooSoon",
     "consume_email_otp",
+    "invalidate_email_otp_challenges",
     "issue_email_otp",
     "resend_email_otp",
 ]

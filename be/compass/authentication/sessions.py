@@ -264,6 +264,27 @@ def resolve_login_challenge(token: str | None, *, now: datetime | None = None):
     return challenge
 
 
+def invalidate_login_challenges(*, user_id, now: datetime | None = None) -> int:
+    """Invalidate every outstanding pre-authentication challenge for one account.
+
+    ``LoginChallenge`` has one terminal timestamp, ``consumed_at``.  Administrative security
+    changes use that existing terminal state rather than adding a second flag or deleting the
+    historical challenge row.  The challenge is never presented as a successful login event.
+    """
+
+    current = now or timezone.now()
+    count = 0
+    challenges = LoginChallenge.objects.select_for_update().filter(
+        user_id=user_id,
+        consumed_at__isnull=True,
+    )
+    for challenge in challenges:
+        challenge.consumed_at = current
+        challenge.save(update_fields=["consumed_at"])
+        count += 1
+    return count
+
+
 def record_session_created(
     *, user, session: AuthSession, context: AuditContext, method: str
 ) -> None:
@@ -464,6 +485,7 @@ __all__ = [
     "digest_opaque_token",
     "generate_opaque_token",
     "has_recent_mfa",
+    "invalidate_login_challenges",
     "record_session_created",
     "record_trusted_session_created",
     "require_recent_mfa",

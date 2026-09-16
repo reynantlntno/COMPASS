@@ -1,11 +1,12 @@
 # COMPASS backend foundation
 
 This directory contains the backend foundation for COMPASS plus Accounts / Identity, Audit Trail,
-Authentication / Account Security, and self-activity projections. It intentionally stops before business
-workflows: configuration, health, error handling, request correlation, rate-limit and idempotency
-primitives, external-service adapters, account identity, capability policy, server-managed
-authentication, and local/live-staging container wiring are included. Organizational scope and
-service domains remain deferred.
+Authentication / Account Security, self-activity projections, and purpose-built Account Management.
+It intentionally stops before broader business workflows: configuration, health, error handling,
+request correlation, rate-limit and idempotency primitives, external-service adapters, account
+identity, capability policy, server-managed authentication, administrative account management, and
+local/live-staging container wiring are included. Organizational scope and service domains remain
+deferred.
 
 ## Baseline
 
@@ -26,6 +27,7 @@ service domains remain deferred.
 - Explicit PyOTP TOTP MFA, hashed recovery codes, trusted sessions, and recent-MFA state
 - Internal email OTP challenge storage and Celery delivery boundary
 - Curated self-only My Activity and Security Activity projections over AuditEvent
+- Capability-authorized administrative Account Management with recent-MFA step-up
 
 The dependency lockfile is committed with this foundation. The chosen Python version is 3.13
 because the current Celery 5.6 support matrix lists CPython 3.9 through 3.13; host Python 3.14
@@ -182,6 +184,42 @@ bounded pagination fields. Raw audit metadata, actor/target internals, request I
 user-agent values, credentials, and security tokens are excluded. Pagination is newest-first with
 `page_size` limited to 50, and the endpoints never accept a user ID or audit search filter.
 
+## Account Management
+
+Administrative account operations are exposed through the purpose-built `/api/v1/accounts` API;
+they are not Django Admin or generic model CRUD. Every account-management endpoint requires the
+effective `accounts.manage` capability. The current global list/detail boundary deliberately does
+not use `accounts.view`, because that capability remains available to operational roles for future
+scoped workflows. Mutating endpoints also require recent MFA through the current authenticated
+session.
+
+```text
+GET    /api/v1/accounts
+POST   /api/v1/accounts
+GET    /api/v1/accounts/{user_id}
+PATCH  /api/v1/accounts/{user_id}/identity
+POST   /api/v1/accounts/{user_id}/disable
+POST   /api/v1/accounts/{user_id}/enable
+PUT    /api/v1/accounts/{user_id}/role
+GET    /api/v1/accounts/{user_id}/designations
+POST   /api/v1/accounts/{user_id}/designations/{designation_code}
+DELETE /api/v1/accounts/{user_id}/designations/{designation_code}
+GET    /api/v1/accounts/{user_id}/capability-overrides
+PUT    /api/v1/accounts/{user_id}/capability-overrides/{capability_code}
+DELETE /api/v1/accounts/{user_id}/capability-overrides/{capability_code}
+POST   /api/v1/accounts/{user_id}/security/revoke-sessions
+POST   /api/v1/accounts/{user_id}/security/revoke-trusted-sessions
+POST   /api/v1/accounts/{user_id}/security/reset-mfa
+```
+
+Account creation normalizes email, accepts one canonical role, and leaves the new account with an
+unusable password. Password assignment, recovery, and onboarding remain separate follow-up work.
+Disable revokes active sessions, trusted sessions, and pending login/security state without deleting
+the account or resetting TOTP. Role, designation, and capability-authority changes revoke old
+authentication state; the last active account with effective `accounts.manage` is protected with a
+PostgreSQL row-lock coordination point. Definitions remain code-controlled, while per-user
+overrides require a non-empty reason and optional future expiry.
+
 ## Live-staging outline
 
 Create a deployment-only `.env` from the same settings contract and set:
@@ -257,8 +295,9 @@ See [`docs/decisions/`](docs/decisions/) for the foundation ADRs, including the 
 to use Django Ninja, omit admin, keep PostgreSQL authoritative, separate Redis concerns, abstract
 S3-compatible storage, separate capability from future scope, use one environment-driven settings
 module, propagate correlation IDs, define idempotency semantics, establish explicit account
-identity policy, keep Audit Trail recording explicit and separate from operational logs, and use
-server-managed cookie sessions for authentication.
+identity policy, keep Audit Trail recording explicit and separate from operational logs, use
+server-managed cookie sessions for authentication, and keep Account Management purpose-built with
+an explicit `accounts.manage` boundary.
 
 ## Known verification gaps
 
@@ -266,5 +305,7 @@ The Compose files are designed for Podman; image pulls, Caddy validation, and a 
 smoke test require a running Podman machine and are listed as deployment checks. MinIO is
 appropriate for local S3 compatibility testing; live-staging should use the approved external
 provider after its lifecycle, retention, backup, and TLS policy are confirmed. The email OTP
-foundation has no user-facing recovery endpoint yet; password reset, account administration,
-organization/scope, Activity Log, and Audit read APIs remain separate follow-up slices.
+foundation has no user-facing recovery endpoint yet; password reset, organization/scope, Activity
+Log, and Audit read APIs remain separate follow-up slices. The current Account Management
+implementation does not provide onboarding/invitation, organizational responsibility, resource
+assignment, or role/designation/capability definition CRUD.

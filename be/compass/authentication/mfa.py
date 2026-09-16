@@ -73,6 +73,25 @@ class TOTPConfirmationResult:
         return "TOTPConfirmationResult(recovery_codes=<redacted>)"
 
 
+@dataclass(frozen=True, slots=True)
+class MFAResetResult:
+    """Counts from a low-level MFA reset; no secret material is carried in the result."""
+
+    disabled_factor_count: int
+    removed_pending_factor_count: int
+    invalidated_recovery_code_count: int
+
+    @property
+    def changed(self) -> bool:
+        return any(
+            (
+                self.disabled_factor_count,
+                self.removed_pending_factor_count,
+                self.invalidated_recovery_code_count,
+            )
+        )
+
+
 def active_totp_factor(user_id):
     return TOTPFactor.objects.filter(
         user_id=user_id,
@@ -174,11 +193,17 @@ def invalidate_recovery_codes(*, user_id, now: datetime | None = None) -> int:
     """Invalidate every still-usable recovery code for a future security-reset workflow."""
 
     current = now or timezone.now()
-    return RecoveryCode.objects.filter(
+    codes = RecoveryCode.objects.select_for_update().filter(
         user_id=user_id,
         used_at__isnull=True,
         invalidated_at__isnull=True,
-    ).update(invalidated_at=current)
+    )
+    count = 0
+    for code in codes:
+        code.invalidated_at = current
+        code.save(update_fields=["invalidated_at"])
+        count += 1
+    return count
 
 
 def _replace_recovery_codes_locked(user_id, *, now: datetime) -> tuple[str, ...]:
@@ -436,6 +461,38 @@ def regenerate_recovery_codes(
     return codes
 
 
+def reset_totp_state(*, user_id, now: datetime | None = None) -> MFAResetResult:
+    """Reset stored MFA state for an administrative security workflow.
+
+    This low-level primitive intentionally has no authorization or audit behavior. Callers must
+    choose the self-service or administrative policy explicitly; neither workflow receives a
+    plaintext secret or replacement recovery codes from this operation.
+    """
+
+    current = now or timezone.now()
+    with transaction.atomic():
+        factors = list(TOTPFactor.objects.select_for_update().filter(user_id=user_id))
+        disabled_factor_count = 0
+        removed_pending_factor_count = 0
+        for factor in factors:
+            if factor.confirmed_at is None and factor.disabled_at is None:
+                factor.delete()
+                removed_pending_factor_count += 1
+            elif factor.confirmed_at is not None and factor.disabled_at is None:
+                factor.disabled_at = current
+                factor.save(update_fields=["disabled_at"])
+                disabled_factor_count += 1
+        invalidated_recovery_code_count = invalidate_recovery_codes(
+            user_id=user_id,
+            now=current,
+        )
+    return MFAResetResult(
+        disabled_factor_count=disabled_factor_count,
+        removed_pending_factor_count=removed_pending_factor_count,
+        invalidated_recovery_code_count=invalidated_recovery_code_count,
+    )
+
+
 def disable_totp(
     *, user, session: AuthSession, context: AuditContext, now: datetime | None = None
 ) -> None:
@@ -478,6 +535,7 @@ __all__ = [
     "TOTPAlreadyConfigured",
     "TOTPConfirmationResult",
     "TOTPEnrollmentMissing",
+    "MFAResetResult",
     "TOTPNotConfigured",
     "TOTPSetupResult",
     "TOTPVerification",
@@ -491,6 +549,7 @@ __all__ = [
     "mfa_required_for_user",
     "normalize_recovery_code",
     "regenerate_recovery_codes",
+    "reset_totp_state",
     "start_totp_enrollment",
     "verify_totp_for_login",
     "verify_totp_for_session",

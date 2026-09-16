@@ -11,7 +11,16 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from compass.audit.actions import ACCOUNT_CREATED
+from compass.audit.actions import (
+    ACCOUNT_CREATED,
+    ACCOUNT_DESIGNATION_ASSIGNED,
+    ACCOUNT_DESIGNATION_REMOVED,
+    ACCOUNT_DISABLED,
+    ACCOUNT_ENABLED,
+    ACCOUNT_MFA_RESET,
+    ACCOUNT_ROLE_CHANGED,
+    ACCOUNT_UPDATED,
+)
 from compass.audit.models import AuditEvent, AuditOutcome
 from compass.authentication.actions import (
     AUTH_LOGIN_FAILED,
@@ -33,7 +42,7 @@ AUTH_TRUSTED_SESSION_TARGET = "auth.trusted"
 AUTH_TOTP_FACTOR_TARGET = "auth.totpfactor"
 AUTH_RECOVERY_CODE_TARGET = "auth.recoverycode"
 
-ActorScope = Literal["self_actor", "system_target"]
+ActorScope = Literal["self_actor", "system_target", "target_user"]
 
 _SUCCESS = frozenset({AuditOutcome.SUCCESS.value})
 _DENIED = frozenset({AuditOutcome.DENIED.value})
@@ -109,7 +118,56 @@ MY_ACTIVITY_PRESENTERS: dict[str, ActivityPresenter] = {
         title="Your COMPASS account was created",
         description="Your account is ready to use.",
         target_type=ACCOUNT_TARGET,
-        actor_scope="system_target",
+        actor_scope="target_user",
+    ),
+    ACCOUNT_UPDATED: _presenter(
+        item_type="account.updated",
+        title="Your account information was updated",
+        description="Your COMPASS account information was updated.",
+        target_type=ACCOUNT_TARGET,
+        actor_scope="target_user",
+    ),
+    ACCOUNT_DISABLED: _presenter(
+        item_type="account.disabled",
+        title="Your account was disabled",
+        description="Your COMPASS account was disabled by an administrator.",
+        target_type=ACCOUNT_TARGET,
+        actor_scope="target_user",
+    ),
+    ACCOUNT_ENABLED: _presenter(
+        item_type="account.enabled",
+        title="Your account was re-enabled",
+        description="Your COMPASS account was re-enabled by an administrator.",
+        target_type=ACCOUNT_TARGET,
+        actor_scope="target_user",
+    ),
+    ACCOUNT_ROLE_CHANGED: _presenter(
+        item_type="account.role.changed",
+        title="Your account role was updated",
+        description="Your COMPASS account role was updated.",
+        target_type=ACCOUNT_TARGET,
+        actor_scope="target_user",
+    ),
+    ACCOUNT_DESIGNATION_ASSIGNED: _presenter(
+        item_type="account.designation.assigned",
+        title="A designation was assigned to your account",
+        description="A designation was assigned to your COMPASS account.",
+        target_type=ACCOUNT_TARGET,
+        actor_scope="target_user",
+    ),
+    ACCOUNT_DESIGNATION_REMOVED: _presenter(
+        item_type="account.designation.removed",
+        title="A designation was removed from your account",
+        description="A designation was removed from your COMPASS account.",
+        target_type=ACCOUNT_TARGET,
+        actor_scope="target_user",
+    ),
+    ACCOUNT_MFA_RESET: _presenter(
+        item_type="account.mfa.reset",
+        title="Your authenticator setup was reset",
+        description="Your COMPASS authenticator setup was reset by an administrator.",
+        target_type=ACCOUNT_TARGET,
+        actor_scope="target_user",
     ),
     AUTH_LOGIN_SUCCESS: _presenter(
         item_type="auth.login",
@@ -128,6 +186,7 @@ MY_ACTIVITY_PRESENTERS: dict[str, ActivityPresenter] = {
         title="Session signed out",
         description="A COMPASS session was signed out.",
         target_type=AUTH_SESSION_TARGET,
+        actor_scope="target_user",
     ),
     AUTH_MFA_TOTP_ENROLLED: _presenter(
         item_type="auth.mfa.totp.enrolled",
@@ -158,6 +217,7 @@ MY_ACTIVITY_PRESENTERS: dict[str, ActivityPresenter] = {
         title="Trusted browser removed",
         description="A trusted browser can no longer skip MFA.",
         target_type=AUTH_TRUSTED_SESSION_TARGET,
+        actor_scope="target_user",
     ),
 }
 

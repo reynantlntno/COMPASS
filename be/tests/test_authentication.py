@@ -334,7 +334,8 @@ def test_trusted_browser_satisfies_mfa_only_after_password_and_can_be_used_then_
     trusted = user.trusted_authentication_sessions.get()
     assert trusted.token_digest != trusted_raw
     trusted.expires_at = timezone.now() - timedelta(seconds=1)
-    trusted.save(update_fields=["expires_at"])
+    trusted.created_at = trusted.expires_at - timedelta(days=1)
+    trusted.save(update_fields=["created_at", "expires_at"])
     assert resolve_trusted_session(trusted_raw) is None
     trusted.expires_at = timezone.now() + timedelta(days=1)
     trusted.save(update_fields=["expires_at"])

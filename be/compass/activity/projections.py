@@ -97,6 +97,8 @@ def _selection_filter(*, user, presenters: dict[str, ActivityPresenter]) -> Q:
                 actor_type=AuditActorType.SYSTEM,
                 actor_user__isnull=True,
             )
+        elif presenter.actor_scope == "target_user":
+            actor_filter = Q(actor_type__in=[AuditActorType.USER, AuditActorType.SYSTEM])
         else:
             # Keep future actor/target policies explicit and fail closed if misconfigured.
             continue
