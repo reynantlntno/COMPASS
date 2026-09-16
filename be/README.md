@@ -1,10 +1,10 @@
 # COMPASS backend foundation
 
-This directory contains the backend foundation for COMPASS. It intentionally stops at
-cross-cutting infrastructure: configuration, health, error handling, request correlation,
-rate-limit and idempotency primitives, external-service adapters, and local/live-staging
-container wiring. Business domains, workflows, admin UI, roles, and capability catalogs are
-deferred until their contracts are agreed.
+This directory contains the backend foundation for COMPASS plus the Accounts / Identity
+foundation. It intentionally stops before business workflows: configuration, health, error
+handling, request correlation, rate-limit and idempotency primitives, external-service adapters,
+account identity, capability policy, and local/live-staging container wiring are included. The
+authentication flows, audit trail, organizational scope, and service domains remain deferred.
 
 ## Baseline
 
@@ -16,6 +16,9 @@ deferred until their contracts are agreed.
 - S3-compatible object storage through `django-storages` and boto3
 - Gunicorn behind Caddy 2.11.4
 - MinIO and Mailpit only in the local Compose profile
+- Custom UUID-based account identity with email as its canonical identifier
+- Explicit roles, designations, capabilities, and account-level capability overrides
+- Private, normalized WebP profile photos through object storage
 
 The dependency lockfile is committed with this foundation. The chosen Python version is 3.13
 because the current Celery 5.6 support matrix lists CPython 3.9 through 3.13; host Python 3.14
@@ -56,6 +59,21 @@ it after the MinIO service is available if the bucket needs to be bootstrapped a
 ```sh
 podman compose --profile local run --rm minio-init
 ```
+
+Synchronize the version-controlled identity policy before creating an initial IT administrator:
+
+```sh
+uv run python manage.py sync_identity_policy
+uv run python manage.py create_it_admin \
+  --email it-admin@example.edu \
+  --first-name IT \
+  --last-name Administrator
+```
+
+The bootstrap command prompts for the password and never accepts it as a command-line argument.
+Use `--password-stdin` for a controlled non-interactive deployment. Re-running policy sync is
+safe; it updates known definitions, adds missing baseline grants, and retains unknown database
+rows. `create_it_admin` refuses an existing account unless `--idempotent` is explicitly supplied.
 
 ## Live-staging outline
 
@@ -119,15 +137,15 @@ the Compose services when deployment automation is introduced.
 
 ## Decisions
 
-See [`docs/decisions/`](docs/decisions/) for the nine foundation ADRs, including the deliberate
-choices to use Django Ninja, omit admin, keep PostgreSQL authoritative, separate Redis concerns,
-abstract S3-compatible storage, reserve future capability/scope design, use one environment-driven
-settings module, propagate correlation IDs, and define idempotency semantics before domain routes.
+See [`docs/decisions/`](docs/decisions/) for the foundation ADRs, including the deliberate choices
+to use Django Ninja, omit admin, keep PostgreSQL authoritative, separate Redis concerns, abstract
+S3-compatible storage, separate capability from future scope, use one environment-driven settings
+module, propagate correlation IDs, define idempotency semantics, and establish explicit account
+identity policy.
 
 ## Known verification gaps
 
-The repository root currently has no Git metadata, so this foundation cannot report a branch or
-commit. The Compose files are designed for Podman; image pulls, Caddy validation, and a full
-multi-container smoke test require a running Podman machine and are listed as deployment checks.
-MinIO is appropriate for local S3 compatibility testing; live-staging should use the approved
-external provider after its lifecycle, retention, backup, and TLS policy are confirmed.
+The Compose files are designed for Podman; image pulls, Caddy validation, and a full multi-container
+smoke test require a running Podman machine and are listed as deployment checks. MinIO is
+appropriate for local S3 compatibility testing; live-staging should use the approved external
+provider after its lifecycle, retention, backup, and TLS policy are confirmed.

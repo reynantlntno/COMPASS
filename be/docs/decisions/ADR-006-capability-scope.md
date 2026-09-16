@@ -1,18 +1,20 @@
-# ADR-006: Reserve capability and scope design for the domain contract
+# ADR-006: Keep capability separate from organizational scope
 
 ## Context
 
-The future product needs roles/capabilities and likely scope rules, but the foundation brief does
-not define tenants, organizations, ownership semantics, or resource boundaries.
+The future product needs roles/capabilities and scope rules, but organizational units, ownership
+semantics, and resource boundaries are not part of the Accounts / Identity foundation.
 
 ## Decision
 
-Do not create placeholder roles, capability catalogs, permission tables, or generic authorization
-shortcuts. Future authorization must be evaluated at the route/service boundary with both the
-capability and the resource scope explicit.
+The Accounts / Identity app owns a small, explicit capability catalog and resolver. Capability
+codes describe what an actor may do, without embedding a campus, college, department, or other
+population in the code. Future authorization must be evaluated at the route/service boundary with
+both the capability and the resource scope explicit. Django Groups, generated model permissions,
+and `is_superuser` are not COMPASS business authorization.
 
 ## Consequences
 
-The foundation has no business authorization behavior to accidentally treat as final. Domain
-design must document actor identity, capability names, resource scope, denial behavior, and audit
-requirements before adding routes.
+The foundation has capability behavior but no organizational scope behavior. Domain design must
+document actor identity, capability names, resource scope, denial behavior, and audit requirements
+before adding routes.
