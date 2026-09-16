@@ -58,6 +58,28 @@ EXPECTED_OPERATION_IDS = {
     "accountsRevokeSessions",
     "accountsRevokeTrustedSessions",
     "accountsResetMfa",
+    "organizationListCampuses",
+    "organizationCreateCampus",
+    "organizationGetCampus",
+    "organizationUpdateCampus",
+    "organizationEnableCampus",
+    "organizationDisableCampus",
+    "organizationListColleges",
+    "organizationCreateCollege",
+    "organizationGetCollege",
+    "organizationUpdateCollege",
+    "organizationEnableCollege",
+    "organizationDisableCollege",
+    "organizationListCounselorResponsibilities",
+    "organizationSetCollegeCounselor",
+    "organizationRemoveCollegeCounselor",
+    "organizationListStaffSupervisions",
+    "organizationSetStaffSupervisor",
+    "organizationRemoveStaffSupervisor",
+    "organizationListStudentAffiliations",
+    "organizationSetStudentAffiliation",
+    "organizationRemoveStudentAffiliation",
+    "organizationListEligiblePeople",
 }
 
 
@@ -116,6 +138,7 @@ def test_all_public_operations_have_stable_unique_ids_and_approved_tags() -> Non
         "auth",
         "activity",
         "accounts",
+        "organization",
     ]
     assert all(
         isinstance(operation.get("tags"), list)
@@ -259,7 +282,12 @@ def test_policy_enums_and_sensitive_model_fields_are_contract_safe() -> None:
         "STUDENT",
     ]
     assert schemas["DesignationCode"]["enum"] == ["DPO", "HEAD_GUIDANCE_COUNSELOR"]
-    assert schemas["CapabilityCode"]["enum"] == ["accounts.manage", "accounts.view"]
+    assert schemas["CapabilityCode"]["enum"] == [
+        "accounts.manage",
+        "accounts.view",
+        "organization.manage",
+        "organization.view",
+    ]
     assert schemas["Effect"]["enum"] == ["GRANT", "REVOKE"]
 
     response_schema_names = {

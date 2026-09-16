@@ -73,23 +73,35 @@ CAPABILITY_DEFINITIONS = (
         name="Manage accounts",
         description="Manage account identity and account status through an authorized workflow.",
     ),
+    CapabilityDefinition(
+        code="organization.view",
+        name="View organization",
+        description="View safe organizational structure through an authorized COMPASS workflow.",
+    ),
+    CapabilityDefinition(
+        code="organization.manage",
+        name="Manage organization",
+        description="Manage organizational routing and responsibility configuration.",
+    ),
 )
 
 # Account identity is visible to operational actors through future, scoped workflows. Account
 # management remains an IT_ADMIN responsibility. Scope and sensitive profile data are separate
 # concerns and are intentionally not implied by these grants.
 ROLE_CAPABILITY_GRANTS: dict[str, frozenset[str]] = {
-    "IT_ADMIN": frozenset({"accounts.view", "accounts.manage"}),
-    "COUNSELOR": frozenset({"accounts.view"}),
-    "GUIDANCE_SERVICES_STAFF": frozenset({"accounts.view"}),
-    "STUDENT": frozenset({"accounts.view"}),
+    "IT_ADMIN": frozenset(
+        {"accounts.view", "accounts.manage", "organization.view", "organization.manage"}
+    ),
+    "COUNSELOR": frozenset({"accounts.view", "organization.view"}),
+    "GUIDANCE_SERVICES_STAFF": frozenset({"accounts.view", "organization.view"}),
+    "STUDENT": frozenset({"accounts.view", "organization.view"}),
 }
 
 # No designation currently adds account-foundation authority. The relationship is still modeled
 # explicitly so later domain policy can grant designation-specific capabilities without turning a
 # designation into a role.
 DESIGNATION_CAPABILITY_GRANTS: dict[str, frozenset[str]] = {
-    "HEAD_GUIDANCE_COUNSELOR": frozenset(),
+    "HEAD_GUIDANCE_COUNSELOR": frozenset({"organization.manage"}),
     "DPO": frozenset(),
 }
 
