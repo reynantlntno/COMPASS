@@ -11,6 +11,26 @@ from ninja.errors import AuthenticationError, AuthorizationError, HttpError, Val
 logger = logging.getLogger("compass.errors")
 
 
+class APIError(Exception):
+    """A safe, centrally rendered public API error."""
+
+    def __init__(
+        self,
+        status_code: int,
+        code: str,
+        message: str,
+        *,
+        details: object | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.code = code
+        self.message = message
+        self.details = details
+        self.headers = headers or {}
+
+
 def _request_id(request: HttpRequest) -> str | None:
     return getattr(request, "request_id", None)
 
@@ -54,6 +74,22 @@ def _safe_validation_details(errors: Iterable[object]) -> list[dict[str, object]
 
 
 def register_exception_handlers(api) -> None:
+    @api.exception_handler(APIError)
+    def api_error(request, exc):
+        payload: dict[str, object] = {
+            "error": {
+                "code": exc.code,
+                "message": exc.message,
+                "request_id": _request_id(request),
+            }
+        }
+        if exc.details is not None:
+            payload["error"]["details"] = exc.details  # type: ignore[index]
+        response = api.create_response(request, payload, status=exc.status_code)
+        for key, value in exc.headers.items():
+            response[key] = value
+        return response
+
     @api.exception_handler(AuthenticationError)
     def authentication_error(request, exc):
         return api.create_response(

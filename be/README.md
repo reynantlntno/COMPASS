@@ -1,11 +1,11 @@
 # COMPASS backend foundation
 
-This directory contains the backend foundation for COMPASS plus the Accounts / Identity
-foundation. It intentionally stops before business workflows: configuration, health, error
-handling, request correlation, rate-limit and idempotency primitives, external-service adapters,
-account identity, capability policy, an explicit Audit Trail foundation, and local/live-staging
-container wiring are included. The authentication flows, organizational scope, and service domains
-remain deferred.
+This directory contains the backend foundation for COMPASS plus Accounts / Identity, Audit Trail,
+and Authentication / Account Security foundations. It intentionally stops before business
+workflows: configuration, health, error handling, request correlation, rate-limit and idempotency
+primitives, external-service adapters, account identity, capability policy, server-managed
+authentication, and local/live-staging container wiring are included. Organizational scope and
+service domains remain deferred.
 
 ## Baseline
 
@@ -21,6 +21,10 @@ remain deferred.
 - Explicit roles, designations, capabilities, and account-level capability overrides
 - Private, normalized WebP profile photos through object storage
 - Synchronous, append-only-by-application Audit Trail events in PostgreSQL
+- Server-managed opaque authentication sessions with revocation and session inspection
+- HttpOnly cookie authentication with Django CSRF protection
+- Explicit PyOTP TOTP MFA, hashed recovery codes, trusted sessions, and recent-MFA state
+- Internal email OTP challenge storage and Celery delivery boundary
 
 The dependency lockfile is committed with this foundation. The chosen Python version is 3.13
 because the current Celery 5.6 support matrix lists CPython 3.9 through 3.13; host Python 3.14
@@ -54,6 +58,53 @@ curl -i http://localhost:8080/api/v1/health/ready
 When `API_DOCS_ENABLED=true`, the versioned OpenAPI UI is at
 `http://localhost:8080/api/v1/docs`. Mailpit is at `http://localhost:8025`; MinIO's API is on
 port 9000 and its local console is on port 9001. Both are bound to loopback by default.
+
+## Authentication and account security development
+
+Authentication uses a random, server-managed opaque credential in the configurable
+`AUTH_SESSION_COOKIE_NAME` cookie. The credential is `HttpOnly`, scoped to `AUTH_SESSION_COOKIE_PATH`,
+and resolves to an `AuthSession` row whose PostgreSQL value is only a SHA-256 digest. Trusted
+browser credentials and short-lived MFA login challenges follow the same digest-only pattern; no
+credential is returned in JSON or stored in browser `localStorage`. Local-staging defaults to
+`SameSite=Lax` and non-Secure cookies so the loopback HTTP proxy remains usable. Live-staging
+requires `AUTH_COOKIE_SECURE=true` and an explicit deployment-appropriate SameSite/origin policy.
+
+The copied `.env` needs a deployment-local `AUTH_TOTP_ENCRYPTION_KEY` before TOTP enrollment or
+verification can run. Generate a Fernet key without putting it in the repository:
+
+```sh
+uv run python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
+```
+
+The browser first calls `GET /api/v1/auth/csrf`, then sends the returned token in
+`X-CSRFToken` on state-changing requests. The session, trusted-session, and MFA challenge cookies
+remain `HttpOnly`; only Django's CSRF cookie is readable by the SPA pattern. Useful auth routes are:
+
+```text
+POST /api/v1/auth/login
+POST /api/v1/auth/logout
+GET  /api/v1/auth/session
+GET  /api/v1/auth/sessions
+POST /api/v1/auth/mfa/totp/setup
+POST /api/v1/auth/mfa/totp/confirm
+POST /api/v1/auth/mfa/totp/verify
+POST /api/v1/auth/mfa/totp/disable
+```
+
+TOTP setup is a two-step operation: call `setup`, scan the returned provisioning URI, then call
+`confirm`. Confirmation returns recovery codes once; PostgreSQL stores only the encrypted TOTP
+secret and one-way recovery-code hashes. The current default does not require MFA for every role,
+but an enrolled factor causes MFA at the next password login. Role-specific mandatory MFA can be
+configured with `AUTH_MFA_REQUIRED_ROLE_CODES`; the setting remains separate from capabilities.
+
+Email OTP is intentionally an internal foundation rather than a public recovery API. Its challenge
+row stores only a hash, and issuance/resend delivery is queued through the existing Celery + SMTP
+adapter. For local delivery checks, inspect Mailpit after exercising the internal service boundary;
+password-reset and full account-recovery workflows are deferred. Trusted sessions are listed and
+revoked through the authenticated `/api/v1/auth/trusted-sessions` routes, while future account and
+security-reset services can call the explicit revocation primitives directly. MFA disable and
+recovery-code regeneration require recent MFA; `AUTH_RECENT_MFA_WINDOW_SECONDS` controls the
+window.
 
 The `minio-init` service creates the configured bucket and explicitly keeps it private. Re-run
 it after the MinIO service is available if the bucket needs to be bootstrapped again:
@@ -121,6 +172,8 @@ Create a deployment-only `.env` from the same settings contract and set:
 - `S3_ENDPOINT_URL` and credentials for the approved external S3-compatible service;
 - real SMTP host/credentials; do not use Mailpit;
 - `TURNSTILE_ENABLED=true`, the server-only Turnstile secret, and expected hostname/action values;
+- a valid `AUTH_TOTP_ENCRYPTION_KEY` in deployment secret storage, `AUTH_COOKIE_SECURE=true`,
+  and explicit auth cookie/origin policy;
 - `CADDY_ADDRESS` and `CADDY_HEALTH_HOST` to the staging hostname,
   `PROXY_BIND_ADDRESS=0.0.0.0`, and ports 80/443.
 
@@ -165,6 +218,9 @@ the Compose services when deployment automation is introduced.
   include request bodies, query strings, tokens, or credentials.
 - API/Django errors share a stable `{ "error": { "code", "message", "request_id" } }` envelope.
   Remote responses do not expose tracebacks.
+- Authentication failures are externally generic; opaque session and trusted-session credentials,
+  passwords, MFA codes, OTP values, and Turnstile tokens are not placed in API JSON or audit
+  metadata. Cookie-authenticated state changes require Django CSRF validation.
 - Redis rate limiting uses an atomic Lua `INCR`/`EXPIRE` operation, but no endpoint policy is
   invented here. Turnstile verification is a separate server-side adapter and is not a rate limit.
 - Idempotency is a reusable Redis reservation/replay boundary keyed by actor + method + route +
@@ -182,11 +238,14 @@ See [`docs/decisions/`](docs/decisions/) for the foundation ADRs, including the 
 to use Django Ninja, omit admin, keep PostgreSQL authoritative, separate Redis concerns, abstract
 S3-compatible storage, separate capability from future scope, use one environment-driven settings
 module, propagate correlation IDs, define idempotency semantics, establish explicit account
-identity policy, and keep Audit Trail recording explicit and separate from operational logs.
+identity policy, keep Audit Trail recording explicit and separate from operational logs, and use
+server-managed cookie sessions for authentication.
 
 ## Known verification gaps
 
 The Compose files are designed for Podman; image pulls, Caddy validation, and a full multi-container
 smoke test require a running Podman machine and are listed as deployment checks. MinIO is
 appropriate for local S3 compatibility testing; live-staging should use the approved external
-provider after its lifecycle, retention, backup, and TLS policy are confirmed.
+provider after its lifecycle, retention, backup, and TLS policy are confirmed. The email OTP
+foundation has no user-facing recovery endpoint yet; password reset, account administration,
+organization/scope, Activity Log, and Audit read APIs remain separate follow-up slices.

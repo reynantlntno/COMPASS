@@ -1,0 +1,23 @@
+"""Stable authentication audit action codes."""
+
+AUTH_LOGIN_SUCCESS = "auth.login.success"
+AUTH_LOGIN_FAILED = "auth.login.failed"
+AUTH_LOGIN_MFA_REQUIRED = "auth.login.mfa.required"
+AUTH_LOGOUT = "auth.logout"
+AUTH_SESSION_CREATED = "auth.session.created"
+AUTH_SESSION_REVOKED = "auth.session.revoked"
+AUTH_MFA_TOTP_SETUP_STARTED = "auth.mfa.totp.setup.started"
+AUTH_MFA_TOTP_ENROLLED = "auth.mfa.totp.enrolled"
+AUTH_MFA_TOTP_VERIFIED = "auth.mfa.totp.verified"
+AUTH_MFA_TOTP_FAILED = "auth.mfa.totp.failed"
+AUTH_MFA_TOTP_DISABLED = "auth.mfa.totp.disabled"
+AUTH_MFA_RECOVERY_CODE_USED = "auth.mfa.recovery.code.used"
+AUTH_MFA_RECOVERY_CODE_FAILED = "auth.mfa.recovery.code.failed"
+AUTH_MFA_RECOVERY_CODES_REGENERATED = "auth.mfa.recovery.codes.regenerated"
+AUTH_TRUSTED_SESSION_CREATED = "auth.trusted.session.created"
+AUTH_TRUSTED_SESSION_REVOKED = "auth.trusted.session.revoked"
+AUTH_EMAIL_OTP_ISSUED = "auth.email.otp.issued"
+AUTH_EMAIL_OTP_FAILED = "auth.email.otp.failed"
+AUTH_EMAIL_OTP_CONSUMED = "auth.email.otp.consumed"
+
+__all__ = [name for name in globals() if name.startswith("AUTH_")]

@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "compass.accounts",
     "compass.audit",
+    "compass.authentication",
 ]
 
 AUTH_USER_MODEL = "accounts.User"
@@ -194,6 +195,73 @@ TURNSTILE_EXPECTED_ACTION = env("TURNSTILE_EXPECTED_ACTION", "")
 if TURNSTILE_ENABLED and not TURNSTILE_SECRET_KEY:
     raise ValueError("TURNSTILE_SECRET_KEY is required when TURNSTILE_ENABLED is true")
 
+# Authentication uses a separate server-managed opaque session rather than Django's signed
+# session cookie. The credential-bearing cookies are scoped to the API and are never readable by
+# browser JavaScript. A deployment may choose SameSite=None for a separately hosted SPA, but it
+# must then also use Secure cookies.
+AUTH_SESSION_COOKIE_NAME = env("AUTH_SESSION_COOKIE_NAME", "compass_session")
+AUTH_SESSION_COOKIE_PATH = env("AUTH_SESSION_COOKIE_PATH", "/api/")
+AUTH_SESSION_COOKIE_DOMAIN = env("AUTH_SESSION_COOKIE_DOMAIN", None)
+AUTH_TRUSTED_COOKIE_NAME = env("AUTH_TRUSTED_COOKIE_NAME", "compass_trusted")
+AUTH_TRUSTED_COOKIE_PATH = env("AUTH_TRUSTED_COOKIE_PATH", "/api/v1/auth")
+AUTH_LOGIN_CHALLENGE_COOKIE_NAME = env(
+    "AUTH_LOGIN_CHALLENGE_COOKIE_NAME", "compass_login_challenge"
+)
+AUTH_LOGIN_CHALLENGE_COOKIE_PATH = env("AUTH_LOGIN_CHALLENGE_COOKIE_PATH", "/api/v1/auth/mfa")
+AUTH_COOKIE_SAMESITE = env("AUTH_COOKIE_SAMESITE", "Lax")
+if AUTH_COOKIE_SAMESITE not in {"Lax", "Strict", "None"}:
+    raise ValueError("AUTH_COOKIE_SAMESITE must be Lax, Strict, or None")
+AUTH_COOKIE_SECURE = env_bool("AUTH_COOKIE_SECURE", not IS_LOCAL_STAGING)
+if not IS_LOCAL_STAGING and not AUTH_COOKIE_SECURE:
+    raise ValueError("AUTH_COOKIE_SECURE must be true in live-staging")
+if AUTH_COOKIE_SAMESITE == "None" and not AUTH_COOKIE_SECURE:
+    raise ValueError("AUTH_COOKIE_SECURE must be true when AUTH_COOKIE_SAMESITE is None")
+
+AUTH_SESSION_AGE_SECONDS = env_int("AUTH_SESSION_AGE_SECONDS", 14 * 24 * 60 * 60)
+AUTH_TRUSTED_SESSION_AGE_SECONDS = env_int("AUTH_TRUSTED_SESSION_AGE_SECONDS", 30 * 24 * 60 * 60)
+AUTH_LOGIN_CHALLENGE_AGE_SECONDS = env_int("AUTH_LOGIN_CHALLENGE_AGE_SECONDS", 5 * 60)
+AUTH_SESSION_LAST_USED_WRITE_INTERVAL_SECONDS = env_int(
+    "AUTH_SESSION_LAST_USED_WRITE_INTERVAL_SECONDS", 5 * 60
+)
+AUTH_RECENT_MFA_WINDOW_SECONDS = env_int("AUTH_RECENT_MFA_WINDOW_SECONDS", 10 * 60)
+AUTH_MAX_SESSION_LIST_SIZE = env_int("AUTH_MAX_SESSION_LIST_SIZE", 100)
+
+# MFA policy is deliberately separate from capabilities. An enrolled TOTP factor is an explicit
+# user opt-in and requires MFA at login; role-specific mandatory MFA can be enabled later through
+# this configuration without changing the authentication/session model.
+AUTH_MFA_REQUIRED_ROLE_CODES = env_csv("AUTH_MFA_REQUIRED_ROLE_CODES", [])
+AUTH_TOTP_ISSUER_NAME = env("AUTH_TOTP_ISSUER_NAME", "COMPASS")
+AUTH_TOTP_INTERVAL_SECONDS = env_int("AUTH_TOTP_INTERVAL_SECONDS", 30)
+AUTH_TOTP_VALID_WINDOW = env_int("AUTH_TOTP_VALID_WINDOW", 1)
+AUTH_TOTP_DIGITS = env_int("AUTH_TOTP_DIGITS", 6)
+if AUTH_TOTP_INTERVAL_SECONDS < 1 or AUTH_TOTP_VALID_WINDOW < 0 or AUTH_TOTP_DIGITS != 6:
+    raise ValueError("TOTP interval/window must be valid and AUTH_TOTP_DIGITS must be 6")
+AUTH_TOTP_ENCRYPTION_KEY = env("AUTH_TOTP_ENCRYPTION_KEY", "")
+if not IS_LOCAL_STAGING and not AUTH_TOTP_ENCRYPTION_KEY:
+    raise ValueError("AUTH_TOTP_ENCRYPTION_KEY is required in live-staging")
+
+AUTH_EMAIL_OTP_TTL_SECONDS = env_int("AUTH_EMAIL_OTP_TTL_SECONDS", 10 * 60)
+AUTH_EMAIL_OTP_MAX_ATTEMPTS = env_int("AUTH_EMAIL_OTP_MAX_ATTEMPTS", 5)
+AUTH_EMAIL_OTP_RESEND_INTERVAL_SECONDS = env_int("AUTH_EMAIL_OTP_RESEND_INTERVAL_SECONDS", 60)
+AUTH_EMAIL_OTP_MAX_SENDS = env_int("AUTH_EMAIL_OTP_MAX_SENDS", 5)
+AUTH_EMAIL_OTP_CODE_LENGTH = env_int("AUTH_EMAIL_OTP_CODE_LENGTH", 6)
+if (
+    AUTH_EMAIL_OTP_TTL_SECONDS < 1
+    or AUTH_EMAIL_OTP_MAX_ATTEMPTS < 1
+    or AUTH_EMAIL_OTP_RESEND_INTERVAL_SECONDS < 1
+    or AUTH_EMAIL_OTP_MAX_SENDS < 1
+    or AUTH_EMAIL_OTP_CODE_LENGTH != 6
+):
+    raise ValueError("email OTP settings must be positive and use six-digit codes")
+
+# Turnstile is enabled by default for anonymous high-abuse flows in live-staging. Local tests and
+# local-staging remain usable with the explicit local default, while live deployments can opt out
+# only by setting a documented security policy deliberately.
+AUTH_TURNSTILE_LOGIN_REQUIRED = env_bool("AUTH_TURNSTILE_LOGIN_REQUIRED", not IS_LOCAL_STAGING)
+AUTH_TURNSTILE_EMAIL_OTP_REQUIRED = env_bool(
+    "AUTH_TURNSTILE_EMAIL_OTP_REQUIRED", not IS_LOCAL_STAGING
+)
+
 IDEMPOTENCY_TTL_SECONDS = env_int("IDEMPOTENCY_TTL_SECONDS", 86_400)
 IDEMPOTENCY_MAX_RESPONSE_BYTES = env_int("IDEMPOTENCY_MAX_RESPONSE_BYTES", 1_048_576)
 API_DOCS_ENABLED = env_bool("API_DOCS_ENABLED", IS_LOCAL_STAGING)
@@ -219,8 +287,12 @@ X_FRAME_OPTIONS = "DENY"
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SECURE = not IS_LOCAL_STAGING
 SESSION_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_NAME = env("CSRF_COOKIE_NAME", "compass_csrf")
+CSRF_COOKIE_HTTPONLY = False
 CSRF_COOKIE_SECURE = not IS_LOCAL_STAGING
 CSRF_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_PATH = "/"
+CSRF_USE_SESSIONS = False
 SECURE_HSTS_SECONDS = 0 if IS_LOCAL_STAGING else 31_536_000
 SECURE_HSTS_INCLUDE_SUBDOMAINS = not IS_LOCAL_STAGING
 SECURE_HSTS_PRELOAD = not IS_LOCAL_STAGING
