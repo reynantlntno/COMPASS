@@ -1,0 +1,1 @@
+"""COMPASS application package."""

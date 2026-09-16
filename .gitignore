@@ -1,0 +1,15 @@
+.DS_Store
+.env
+**/.env
+**/.venv/
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/
+**/.coverage
+**/htmlcov/
+**/staticfiles/
+**/media/
+fe/node_modules/
+fe/dist/

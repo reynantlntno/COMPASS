@@ -1,0 +1,211 @@
+name: compass
+
+x-app: &app
+  image: localhost/compass-backend:local
+  env_file:
+    - .env
+  restart: unless-stopped
+
+services:
+  web:
+    <<: *app
+    pull_policy: build
+    build:
+      context: .
+      dockerfile: Containerfile
+    command:
+      [
+        "gunicorn",
+        "--bind",
+        "0.0.0.0:8000",
+        "--workers",
+        "${WEB_CONCURRENCY:-2}",
+        "--no-control-socket",
+        "--access-logfile",
+        "-",
+        "--error-logfile",
+        "-",
+        "config.wsgi:application",
+      ]
+    expose:
+      - "8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/ready', timeout=2)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    <<: *app
+    pull_policy: never
+    command:
+      [
+        "celery",
+        "--app",
+        "config",
+        "worker",
+        "--loglevel=INFO",
+        "--concurrency=${CELERY_WORKER_CONCURRENCY:-2}",
+      ]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  beat:
+    <<: *app
+    pull_policy: never
+    command: ["celery", "--app", "config", "beat", "--loglevel=INFO", "--pidfile="]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  proxy:
+    image: docker.io/library/caddy:2.11.4-alpine
+    restart: unless-stopped
+    environment:
+      CADDY_ADDRESS: "${CADDY_ADDRESS:-http://localhost}"
+      CADDY_HEALTH_HOST: "${CADDY_HEALTH_HOST:-localhost}"
+      CADDY_MAX_REQUEST_BODY_SIZE: "${CADDY_MAX_REQUEST_BODY_SIZE:-10MB}"
+    ports:
+      - "${PROXY_BIND_ADDRESS:-127.0.0.1}:${PROXY_HTTP_PORT:-8080}:80"
+      - "${PROXY_BIND_ADDRESS:-127.0.0.1}:${PROXY_HTTPS_PORT:-8443}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--header=Host: localhost",
+          "--spider",
+          "--quiet",
+          "http://127.0.0.1/api/v1/health/live",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    depends_on:
+      web:
+        condition: service_healthy
+
+  postgres:
+    image: docker.io/library/postgres:17.11-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-compass}"
+      POSTGRES_USER: "${POSTGRES_USER:-compass}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: docker.io/library/redis:8.10.1-trixie
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: "${REDIS_PASSWORD}"
+    command:
+      [
+        "sh",
+        "-c",
+        "exec redis-server --appendonly yes --requirepass \"$${REDIS_PASSWORD}\"",
+      ]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "redis-cli --no-auth-warning -a \"$${REDIS_PASSWORD}\" ping | grep -q PONG",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    profiles: ["local"]
+    image: quay.io/minio/minio:RELEASE.2025-07-23T15-54-02Z
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: "${S3_ACCESS_KEY_ID}"
+      MINIO_ROOT_PASSWORD: "${S3_SECRET_ACCESS_KEY}"
+    command: ["server", "/data", "--console-address", ":9001"]
+    ports:
+      - "${MINIO_BIND_ADDRESS:-127.0.0.1}:${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_BIND_ADDRESS:-127.0.0.1}:${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  minio-init:
+    profiles: ["local"]
+    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
+    restart: "no"
+    environment:
+      MINIO_ROOT_USER: "${S3_ACCESS_KEY_ID}"
+      MINIO_ROOT_PASSWORD: "${S3_SECRET_ACCESS_KEY}"
+      S3_BUCKET_NAME: "${S3_BUCKET_NAME:-compass-local}"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}" &&
+        mc mb --ignore-existing "local/$${S3_BUCKET_NAME}" &&
+        mc anonymous set none "local/$${S3_BUCKET_NAME}"
+    depends_on:
+      minio:
+        condition: service_healthy
+
+  mailpit:
+    profiles: ["local"]
+    image: docker.io/axllent/mailpit:v1.31.1
+    restart: unless-stopped
+    environment:
+      MP_DATABASE: /data/mailpit.db
+      MP_MAX_MESSAGES: "5000"
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+    ports:
+      - "${MAILPIT_BIND_ADDRESS:-127.0.0.1}:${MAILPIT_SMTP_PORT:-1025}:1025"
+      - "${MAILPIT_BIND_ADDRESS:-127.0.0.1}:${MAILPIT_UI_PORT:-8025}:8025"
+    volumes:
+      - mailpit_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet http://127.0.0.1:8025/readyz"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  mailpit_data:
+  caddy_data:
+  caddy_config:
