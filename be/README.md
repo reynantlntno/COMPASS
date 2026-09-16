@@ -351,3 +351,10 @@ foundation has no user-facing recovery endpoint yet; password reset, organizatio
 Log, and Audit read APIs remain separate follow-up slices. The current Account Management
 implementation does not provide onboarding/invitation, organizational responsibility, resource
 assignment, or role/designation/capability definition CRUD.
+
+
+## Organization and default responsibility scope
+
+The Organization domain models an explicit Campus -> College structure, current student college affiliation, one default counselor per College, and Guidance Services Staff supervision. Effective organizational scope is default responsibility/routing context rather than a permanent authorization wall: future preferred-counselor and case-specific assignment rules may cross those boundaries. An active Counselor holding the HEAD_GUIDANCE_COUNSELOR designation has institution-wide responsibility over active Colleges under active Campuses and is the deterministic fallback only when exactly one valid Head exists.
+
+Organization management uses the scope-free capabilities `organization.view` and `organization.manage`; mutations reuse recent-MFA step-up and are audited synchronously. No Campus or College delete endpoints are exposed.
