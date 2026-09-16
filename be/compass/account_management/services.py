@@ -91,6 +91,10 @@ class PaginationError(AccountManagementError):
     """The requested account page is outside the supported bounds."""
 
 
+class OrganizationRelationshipConflict(AccountManagementError):
+    """The role change would invalidate an Organization relationship."""
+
+
 @dataclass(frozen=True, slots=True)
 class AccountPage:
     items: tuple[User, ...]
@@ -596,6 +600,15 @@ def change_role(
             )
         if target.role_id == role_record.pk:
             return MutationResult(user=target, changed=False)
+        from compass.organization.services import (
+            OrganizationRoleTransitionConflict,
+            validate_role_transition,
+        )
+
+        try:
+            validate_role_transition(user=target, new_role_code=role_code)
+        except OrganizationRoleTransitionConflict as exc:
+            raise OrganizationRelationshipConflict(str(exc)) from exc
         from_role = target.role.code
         target.role = role_record
         target.save(update_fields=["role", "updated_at"])
