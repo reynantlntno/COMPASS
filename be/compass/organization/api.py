@@ -401,7 +401,7 @@ def counselor_responsibilities(
     college_id: UUID | None = None,
     campus_id: UUID | None = None,
 ):
-    _require(request, "organization.view")
+    _require(request, "organization.manage")
     qs = CounselorResponsibility.objects.select_related(
         "college__campus", "counselor__role"
     ).order_by("college__campus__code", "college__code")
@@ -460,7 +460,7 @@ def college_counselor_remove(request, college_id: UUID):
     operation_id="organizationListStaffSupervisions",
 )
 def staff_supervisions(request):
-    _require(request, "organization.view")
+    _require(request, "organization.manage")
     qs = StaffSupervision.objects.select_related(
         "staff__role", "supervisor__role"
     ).order_by("staff__last_name", "staff__id")
@@ -513,7 +513,7 @@ def staff_supervisor_remove(request, staff_id: UUID):
     operation_id="organizationListStudentAffiliations",
 )
 def student_affiliations(request):
-    _require(request, "organization.view")
+    _require(request, "organization.manage")
     qs = StudentAffiliation.objects.select_related(
         "student__role", "college__campus"
     ).order_by("student__last_name", "student__id")
