@@ -140,8 +140,8 @@ def test_policy_sync_is_idempotent_and_does_not_create_django_model_permissions(
         "DPO",
     }
     assert set(Capability.objects.values_list("code", flat=True)) == set(CAPABILITY_CODES)
-    assert RoleCapability.objects.count() == 5
-    assert DesignationCapability.objects.count() == 0
+    assert RoleCapability.objects.count() == 10
+    assert DesignationCapability.objects.count() == 1
     assert Permission.objects.filter(content_type__app_label="accounts").count() == 0
 
     second_output = StringIO()
@@ -152,8 +152,9 @@ def test_policy_sync_is_idempotent_and_does_not_create_django_model_permissions(
     assert "role grants created=0" in second_output.getvalue()
     assert Role.objects.count() == 4
     assert Designation.objects.count() == 2
-    assert Capability.objects.count() == 2
-    assert RoleCapability.objects.count() == 5
+    assert Capability.objects.count() == 4
+    assert RoleCapability.objects.count() == 10
+    assert DesignationCapability.objects.count() == 1
 
 
 @pytest.mark.django_db
@@ -182,7 +183,12 @@ def test_effective_capabilities_combine_role_designation_and_overrides():
     UserDesignation.objects.create(user=user, designation=head)
     DesignationCapability.objects.create(designation=head, capability=manage)
 
-    assert effective_capabilities(user) == {"accounts.view", "accounts.manage"}
+    assert effective_capabilities(user) == {
+        "accounts.view",
+        "accounts.manage",
+        "organization.view",
+        "organization.manage",
+    }
     assert user.has_capability("accounts.view")
     assert user.has_capability("accounts.manage")
 
@@ -194,6 +200,8 @@ def test_effective_capabilities_combine_role_designation_and_overrides():
     )
     assert revoke.reason == "Temporary separation of duties"
     assert user.has_capability("accounts.view")
+    assert user.has_capability("organization.view")
+    assert user.has_capability("organization.manage")
     assert not user.has_capability("accounts.manage")
 
     grant = set_user_capability_override(
