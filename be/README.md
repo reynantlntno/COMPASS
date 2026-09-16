@@ -220,6 +220,39 @@ authentication state; the last active account with effective `accounts.manage` i
 PostgreSQL row-lock coordination point. Definitions remain code-controlled, while per-user
 overrides require a non-empty reason and optional future expiry.
 
+## API Contract
+
+The committed [`../contracts/openapi.json`](../contracts/openapi.json) is the development contract
+for the version-one API. Generate it from the mounted Django Ninja API; do not edit the JSON by
+hand:
+
+```sh
+cd /Users/reynantlntno/Projects/COMPASS/be
+DJANGO_SETTINGS_MODULE=tests.settings uv run python manage.py export_openapi \
+  --output ../contracts/openapi.json
+```
+
+Check whether the artifact is current without rewriting it:
+
+```sh
+DJANGO_SETTINGS_MODULE=tests.settings uv run python manage.py export_openapi \
+  --check --output ../contracts/openapi.json
+```
+
+The same commands can run with the normal backend environment by omitting the
+`DJANGO_SETTINGS_MODULE=tests.settings` prefix. The exporter does not depend on the HTTP docs
+route, so it remains usable when `API_DOCS_ENABLED=false`. When enabled, local Swagger is at
+`/api/v1/docs` and the raw schema is at `/api/v1/openapi.json`.
+
+Operation IDs are stable public identifiers (`health<Action>`, `auth<Action>`, `me<Action>`, and
+`accounts<Action>`), and tags are bounded domains rather than user roles. Intentional path, method,
+operation ID, parameter, schema, status-code, enum, or security changes must update the artifact
+in the same change. Future frontend work should use relative `/api/` requests through a same-origin
+proxy or ingress, preserve browser cookie credentials and Django CSRF behavior, and never read or
+store the HttpOnly authentication cookie. A future Next.js server adapter may need explicit
+request-scoped cookie forwarding for SSR; the backend contract does not weaken cookie security for
+that case. Orval configuration and generated TypeScript belong to the future `fe/` workspace.
+
 ## Live-staging outline
 
 Create a deployment-only `.env` from the same settings contract and set:
@@ -297,7 +330,9 @@ S3-compatible storage, separate capability from future scope, use one environmen
 module, propagate correlation IDs, define idempotency semantics, establish explicit account
 identity policy, keep Audit Trail recording explicit and separate from operational logs, use
 server-managed cookie sessions for authentication, and keep Account Management purpose-built with
-an explicit `accounts.manage` boundary.
+an explicit `accounts.manage` boundary. The API contract ADR establishes stable operation IDs,
+machine-friendly tags, shared error schemas, and the committed deterministic OpenAPI artifact for
+future frontend client generation.
 
 ## Known verification gaps
 

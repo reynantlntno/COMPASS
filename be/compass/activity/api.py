@@ -8,6 +8,7 @@ from uuid import UUID
 from ninja import Router, Schema
 
 from compass.authentication.api import session_auth
+from compass.common.api import response_with_errors
 from compass.common.errors import APIError
 
 from .projections import (
@@ -41,8 +42,9 @@ def _invalid_pagination(exc: ActivityPaginationError) -> None:
 
 @router.get(
     "/activity",
-    response=ActivityPageResponse,
+    response=response_with_errors(ActivityPageResponse, 401, 422),
     auth=session_auth,
+    operation_id="meListActivity",
     summary="View my activity",
 )
 def my_activity(request, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE):
@@ -59,8 +61,9 @@ def my_activity(request, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE):
 
 @router.get(
     "/security-activity",
-    response=ActivityPageResponse,
+    response=response_with_errors(ActivityPageResponse, 401, 422),
     auth=session_auth,
+    operation_id="meListSecurityActivity",
     summary="View my security activity",
 )
 def security_activity(request, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE):

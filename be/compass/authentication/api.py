@@ -45,10 +45,11 @@ from compass.authentication.sessions import (
     revoke_other_auth_sessions,
     revoke_trusted_session,
 )
+from compass.common.api import response_with_errors
 from compass.common.errors import APIError
 from compass.common.rate_limit import client_ip
 
-router = Router(tags=["authentication"])
+router = Router(tags=["auth"])
 
 
 class UserSummary(Schema):
@@ -154,6 +155,10 @@ class TrustedSessionListResponse(Schema):
 class OpaqueSessionAuth(APIKeyCookie):
     """Resolve the COMPASS opaque cookie and enforce CSRF before authentication."""
 
+    openapi_description = (
+        "HttpOnly opaque COMPASS session cookie. The browser sends it automatically; it is not a "
+        "Bearer token. State-changing requests also require Django CSRF protection."
+    )
     param_name = settings.AUTH_SESSION_COOKIE_NAME
 
     def __init__(self) -> None:
@@ -342,14 +347,28 @@ def _raise_invalid_mfa(exc: Exception) -> None:
     raise APIError(400, "mfa_failed", "The MFA response could not be verified.") from exc
 
 
-@router.get("/csrf", response=CSRFResponse, summary="Obtain the CSRF token cookie")
+@router.get(
+    "/csrf",
+    response=CSRFResponse,
+    operation_id="authGetCsrf",
+    summary="Obtain the CSRF token cookie",
+    description=(
+        "Return the readable Django CSRF token and issue the CSRF cookie. "
+        "The HttpOnly authentication cookie is not returned."
+    ),
+)
 def csrf_token(request):
     """Return a masked Django CSRF token and cause the CSRF cookie to be issued."""
 
     return {"csrf_token": get_token(request)}
 
 
-@router.post("/login", response=LoginResponse, summary="Authenticate with email and password")
+@router.post(
+    "/login",
+    response=response_with_errors(LoginResponse, 401, 403, 422, 429, 503),
+    operation_id="authLogin",
+    summary="Authenticate with email and password",
+)
 def login(request, payload: LoginRequest, response: HttpResponse):
     _require_csrf(request)
     try:
@@ -372,7 +391,12 @@ def login(request, payload: LoginRequest, response: HttpResponse):
     return _login_response(result)
 
 
-@router.post("/mfa/verify", response=LoginResponse, summary="Complete a login MFA challenge")
+@router.post(
+    "/mfa/verify",
+    response=response_with_errors(LoginResponse, 400, 403, 422, 429, 503),
+    operation_id="authVerifyLoginMfa",
+    summary="Complete a login MFA challenge",
+)
 def verify_login_mfa(request, payload: LoginMFARequest, response: HttpResponse):
     _require_csrf(request)
     try:
@@ -394,7 +418,11 @@ def verify_login_mfa(request, payload: LoginMFARequest, response: HttpResponse):
 
 
 @router.post(
-    "/logout", response=RevokeResponse, auth=session_auth, summary="Log out the current session"
+    "/logout",
+    response=response_with_errors(RevokeResponse, 401, 403, 503),
+    auth=session_auth,
+    operation_id="authLogout",
+    summary="Log out the current session",
 )
 def logout(request, response: HttpResponse):
     user = request.auth_user
@@ -415,8 +443,9 @@ def logout(request, response: HttpResponse):
 
 @router.get(
     "/session",
-    response=CurrentSessionResponse,
+    response=response_with_errors(CurrentSessionResponse, 401),
     auth=session_auth,
+    operation_id="authGetSession",
     summary="Inspect the current session",
 )
 def current_session(request):
@@ -430,7 +459,11 @@ def current_session(request):
 
 
 @router.get(
-    "/sessions", response=SessionListResponse, auth=session_auth, summary="List active sessions"
+    "/sessions",
+    response=response_with_errors(SessionListResponse, 401),
+    auth=session_auth,
+    operation_id="authListSessions",
+    summary="List active sessions",
 )
 def sessions(request):
     user = request.auth_user
@@ -450,8 +483,9 @@ def sessions(request):
 
 @router.post(
     "/sessions/revoke-others",
-    response=RevokeManyResponse,
+    response=response_with_errors(RevokeManyResponse, 401, 403, 503),
     auth=session_auth,
+    operation_id="authRevokeOtherSessions",
     summary="Revoke all other sessions",
 )
 def revoke_other_sessions(request):
@@ -469,8 +503,9 @@ def revoke_other_sessions(request):
 
 @router.delete(
     "/sessions/{session_id}",
-    response=RevokeResponse,
+    response=response_with_errors(RevokeResponse, 401, 403, 404, 422, 503),
     auth=session_auth,
+    operation_id="authRevokeSession",
     summary="Revoke one session",
 )
 def revoke_session(request, session_id: UUID, response: HttpResponse):
@@ -495,8 +530,9 @@ def revoke_session(request, session_id: UUID, response: HttpResponse):
 
 @router.post(
     "/mfa/totp/setup",
-    response=TOTPSetupResponse,
+    response=response_with_errors(TOTPSetupResponse, 401, 403, 409, 503),
     auth=session_auth,
+    operation_id="authStartTotpSetup",
     summary="Start TOTP enrollment",
 )
 def totp_setup(request):
@@ -515,8 +551,9 @@ def totp_setup(request):
 
 @router.post(
     "/mfa/totp/confirm",
-    response=TOTPConfirmationResponse,
+    response=response_with_errors(TOTPConfirmationResponse, 400, 401, 403, 422, 429, 503),
     auth=session_auth,
+    operation_id="authConfirmTotpSetup",
     summary="Confirm TOTP enrollment",
 )
 def totp_confirm(request, payload: MFARequest):
@@ -545,8 +582,9 @@ def totp_confirm(request, payload: MFARequest):
 
 @router.post(
     "/mfa/totp/verify",
-    response=MFAStatusResponse,
+    response=response_with_errors(MFAStatusResponse, 400, 401, 403, 422, 429, 503),
     auth=session_auth,
+    operation_id="authVerifyTotp",
     summary="Verify TOTP for step-up authentication",
 )
 def totp_verify(request, payload: MFARequest):
@@ -574,8 +612,9 @@ def totp_verify(request, payload: MFARequest):
 
 @router.post(
     "/mfa/totp/disable",
-    response=MFAStatusResponse,
+    response=response_with_errors(MFAStatusResponse, 400, 401, 403, 503),
     auth=session_auth,
+    operation_id="authDisableTotp",
     summary="Disable the current TOTP factor",
 )
 def totp_disable(request):
@@ -599,8 +638,9 @@ def totp_disable(request):
 
 @router.post(
     "/mfa/recovery-codes/regenerate",
-    response=TOTPConfirmationResponse,
+    response=response_with_errors(TOTPConfirmationResponse, 400, 401, 403, 503),
     auth=session_auth,
+    operation_id="authRegenerateRecoveryCodes",
     summary="Regenerate MFA recovery codes",
 )
 def recovery_codes_regenerate(request):
@@ -624,8 +664,9 @@ def recovery_codes_regenerate(request):
 
 @router.get(
     "/trusted-sessions",
-    response=TrustedSessionListResponse,
+    response=response_with_errors(TrustedSessionListResponse, 401),
     auth=session_auth,
+    operation_id="authListTrustedSessions",
     summary="List trusted browser sessions",
 )
 def trusted_sessions(request):
@@ -651,8 +692,9 @@ def trusted_sessions(request):
 
 @router.post(
     "/trusted-sessions/revoke-others",
-    response=RevokeManyResponse,
+    response=response_with_errors(RevokeManyResponse, 401, 403, 503),
     auth=session_auth,
+    operation_id="authRevokeOtherTrustedSessions",
     summary="Revoke other trusted browser sessions",
 )
 def revoke_other_trusted_sessions(request):
@@ -674,8 +716,9 @@ def revoke_other_trusted_sessions(request):
 
 @router.delete(
     "/trusted-sessions/{session_id}",
-    response=RevokeResponse,
+    response=response_with_errors(RevokeResponse, 401, 403, 404, 422, 503),
     auth=session_auth,
+    operation_id="authRevokeTrustedSession",
     summary="Revoke one trusted browser session",
 )
 def revoke_trusted(request, session_id: UUID, response: HttpResponse):

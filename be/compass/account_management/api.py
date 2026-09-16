@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import Enum
 from typing import NoReturn
 from uuid import UUID
 
@@ -10,9 +11,11 @@ from ninja import Router, Schema, Status
 from pydantic import ConfigDict
 
 from compass.accounts.models import UserCapabilityOverride
+from compass.accounts.policy import CAPABILITY_CODES, DESIGNATION_CODES, ROLE_CODES
 from compass.audit.context import AuditContext
 from compass.authentication.api import session_auth
 from compass.authentication.sessions import RecentMFARequired, require_recent_mfa
+from compass.common.api import response_with_errors
 from compass.common.errors import APIError
 
 from .services import (
@@ -44,7 +47,17 @@ from .services import (
     update_identity,
 )
 
-router = Router(tags=["account management"])
+router = Router(tags=["accounts"])
+
+
+def _code_enum(name: str, codes: frozenset[str]) -> type[Enum]:
+    members = {code.replace(".", "_").replace("-", "_").upper(): code for code in sorted(codes)}
+    return Enum(name, members, module=__name__, type=str)
+
+
+RoleCode = _code_enum("RoleCode", ROLE_CODES)
+DesignationCode = _code_enum("DesignationCode", DESIGNATION_CODES)
+CapabilityCode = _code_enum("CapabilityCode", CAPABILITY_CODES)
 
 
 class StrictSchema(Schema):
@@ -59,8 +72,8 @@ class AccountSummaryResponse(StrictSchema):
     last_name: str
     suffix: str
     full_name: str
-    role: str
-    designations: list[str]
+    role: RoleCode
+    designations: list[DesignationCode]
     is_active: bool
     created_at: datetime
 
@@ -82,7 +95,7 @@ class AccountCreateRequest(StrictSchema):
     email: str
     first_name: str
     last_name: str
-    role: str
+    role: RoleCode
     middle_name: str = ""
     suffix: str = ""
     is_active: bool = True
@@ -97,11 +110,11 @@ class IdentityUpdateRequest(StrictSchema):
 
 
 class RoleUpdateRequest(StrictSchema):
-    role: str
+    role: RoleCode
 
 
 class DesignationListResponse(StrictSchema):
-    designations: list[str]
+    designations: list[DesignationCode]
 
 
 class CapabilityOverrideCreateRequest(StrictSchema):
@@ -117,7 +130,7 @@ class CapabilityOverrideCreatorResponse(StrictSchema):
 
 
 class CapabilityOverrideResponse(StrictSchema):
-    capability: str
+    capability: CapabilityCode
     effect: UserCapabilityOverride.Effect
     reason: str
     expires_at: datetime | None
@@ -200,14 +213,20 @@ def _context(request) -> AuditContext:
     return AuditContext.from_request(request, actor=request.auth_user)
 
 
-@router.get("", response=AccountListResponse, auth=session_auth, summary="List managed accounts")
+@router.get(
+    "",
+    response=response_with_errors(AccountListResponse, 401, 403, 422),
+    auth=session_auth,
+    operation_id="accountsList",
+    summary="List managed accounts",
+)
 def accounts(
     request,
     page: int = 1,
     page_size: int = DEFAULT_PAGE_SIZE,
-    role: str | None = None,
+    role: RoleCode | None = None,
     is_active: bool | None = None,
-    designation: str | None = None,
+    designation: DesignationCode | None = None,
     search: str | None = None,
 ):
     _require_management(request, recent_mfa=False)
@@ -215,9 +234,9 @@ def accounts(
         result = list_accounts(
             page=page,
             page_size=page_size,
-            role=role,
+            role=role.value if role is not None else None,
             is_active=is_active,
-            designation=designation,
+            designation=designation.value if designation is not None else None,
             search=search,
         )
     except AccountManagementError as exc:
@@ -232,8 +251,17 @@ def accounts(
 
 @router.post(
     "",
-    response={201: AccountDetailResponse},
+    response=response_with_errors(
+        AccountDetailResponse,
+        401,
+        403,
+        409,
+        422,
+        503,
+        success_status=201,
+    ),
     auth=session_auth,
+    operation_id="accountsCreate",
     summary="Create a managed account",
 )
 def account_create(request, payload: AccountCreateRequest):
@@ -248,7 +276,7 @@ def account_create(request, payload: AccountCreateRequest):
             middle_name=payload.middle_name,
             last_name=payload.last_name,
             suffix=payload.suffix,
-            role=payload.role,
+            role=payload.role.value,
             is_active=payload.is_active,
         )
     except RecentMFARequired as exc:
@@ -260,8 +288,9 @@ def account_create(request, payload: AccountCreateRequest):
 
 @router.patch(
     "/{user_id}/identity",
-    response=AccountDetailResponse,
+    response=response_with_errors(AccountDetailResponse, 401, 403, 404, 409, 422),
     auth=session_auth,
+    operation_id="accountsUpdateIdentity",
     summary="Update managed account identity",
 )
 def account_identity(request, user_id: UUID, payload: IdentityUpdateRequest):
@@ -283,8 +312,9 @@ def account_identity(request, user_id: UUID, payload: IdentityUpdateRequest):
 
 @router.post(
     "/{user_id}/disable",
-    response=AccountDetailResponse,
+    response=response_with_errors(AccountDetailResponse, 401, 403, 404, 409, 422),
     auth=session_auth,
+    operation_id="accountsDisable",
     summary="Disable a managed account",
 )
 def account_disable(request, user_id: UUID):
@@ -306,8 +336,9 @@ def account_disable(request, user_id: UUID):
 
 @router.post(
     "/{user_id}/enable",
-    response=AccountDetailResponse,
+    response=response_with_errors(AccountDetailResponse, 401, 403, 404, 422),
     auth=session_auth,
+    operation_id="accountsEnable",
     summary="Enable a managed account",
 )
 def account_enable(request, user_id: UUID):
@@ -329,8 +360,9 @@ def account_enable(request, user_id: UUID):
 
 @router.put(
     "/{user_id}/role",
-    response=AccountDetailResponse,
+    response=response_with_errors(AccountDetailResponse, 401, 403, 404, 409, 422, 503),
     auth=session_auth,
+    operation_id="accountsChangeRole",
     summary="Change a managed account role",
 )
 def account_role(request, user_id: UUID, payload: RoleUpdateRequest):
@@ -341,7 +373,7 @@ def account_role(request, user_id: UUID, payload: RoleUpdateRequest):
             actor_session=request.auth_session,
             target_id=user_id,
             context=_context(request),
-            role=payload.role,
+            role=payload.role.value,
         )
     except RecentMFARequired as exc:
         raise APIError(403, "recent_mfa_required", "Recent MFA is required.") from exc
@@ -352,8 +384,9 @@ def account_role(request, user_id: UUID, payload: RoleUpdateRequest):
 
 @router.get(
     "/{user_id}/designations",
-    response=DesignationListResponse,
+    response=response_with_errors(DesignationListResponse, 401, 403, 404, 422),
     auth=session_auth,
+    operation_id="accountsListDesignations",
     summary="List managed account designations",
 )
 def account_designations(request, user_id: UUID):
@@ -367,11 +400,12 @@ def account_designations(request, user_id: UUID):
 
 @router.post(
     "/{user_id}/designations/{designation_code}",
-    response=AccountDetailResponse,
+    response=response_with_errors(AccountDetailResponse, 401, 403, 404, 409, 422),
     auth=session_auth,
+    operation_id="accountsAssignDesignation",
     summary="Assign a managed account designation",
 )
-def account_designation_assign(request, user_id: UUID, designation_code: str):
+def account_designation_assign(request, user_id: UUID, designation_code: DesignationCode):
     _require_management(request, recent_mfa=True)
     try:
         assign_designation(
@@ -379,7 +413,7 @@ def account_designation_assign(request, user_id: UUID, designation_code: str):
             actor_session=request.auth_session,
             target_id=user_id,
             context=_context(request),
-            designation=designation_code,
+            designation=designation_code.value,
         )
     except RecentMFARequired as exc:
         raise APIError(403, "recent_mfa_required", "Recent MFA is required.") from exc
@@ -390,11 +424,12 @@ def account_designation_assign(request, user_id: UUID, designation_code: str):
 
 @router.delete(
     "/{user_id}/designations/{designation_code}",
-    response=AccountDetailResponse,
+    response=response_with_errors(AccountDetailResponse, 401, 403, 404, 409, 422),
     auth=session_auth,
+    operation_id="accountsRemoveDesignation",
     summary="Remove a managed account designation",
 )
-def account_designation_remove(request, user_id: UUID, designation_code: str):
+def account_designation_remove(request, user_id: UUID, designation_code: DesignationCode):
     _require_management(request, recent_mfa=True)
     try:
         remove_designation(
@@ -402,7 +437,7 @@ def account_designation_remove(request, user_id: UUID, designation_code: str):
             actor_session=request.auth_session,
             target_id=user_id,
             context=_context(request),
-            designation=designation_code,
+            designation=designation_code.value,
         )
     except RecentMFARequired as exc:
         raise APIError(403, "recent_mfa_required", "Recent MFA is required.") from exc
@@ -413,8 +448,9 @@ def account_designation_remove(request, user_id: UUID, designation_code: str):
 
 @router.get(
     "/{user_id}/capability-overrides",
-    response=CapabilityOverrideListResponse,
+    response=response_with_errors(CapabilityOverrideListResponse, 401, 403, 404, 422),
     auth=session_auth,
+    operation_id="accountsListCapabilityOverrides",
     summary="List managed account capability overrides",
 )
 def account_capability_overrides(request, user_id: UUID):
@@ -428,14 +464,15 @@ def account_capability_overrides(request, user_id: UUID):
 
 @router.put(
     "/{user_id}/capability-overrides/{capability_code}",
-    response=CapabilityOverrideResponse,
+    response=response_with_errors(CapabilityOverrideResponse, 401, 403, 404, 409, 422, 503),
     auth=session_auth,
+    operation_id="accountsSetCapabilityOverride",
     summary="Set a managed account capability override",
 )
 def account_capability_override_set(
     request,
     user_id: UUID,
-    capability_code: str,
+    capability_code: CapabilityCode,
     payload: CapabilityOverrideCreateRequest,
 ):
     _require_management(request, recent_mfa=True)
@@ -445,7 +482,7 @@ def account_capability_override_set(
             actor_session=request.auth_session,
             target_id=user_id,
             context=_context(request),
-            capability=capability_code,
+            capability=capability_code.value,
             effect=payload.effect,
             reason=payload.reason,
             expires_at=payload.expires_at,
@@ -473,11 +510,12 @@ def account_capability_override_set(
 
 @router.delete(
     "/{user_id}/capability-overrides/{capability_code}",
-    response=OverrideRemovalResponse,
+    response=response_with_errors(OverrideRemovalResponse, 401, 403, 404, 409, 422),
     auth=session_auth,
+    operation_id="accountsRemoveCapabilityOverride",
     summary="Remove a managed account capability override",
 )
-def account_capability_override_remove(request, user_id: UUID, capability_code: str):
+def account_capability_override_remove(request, user_id: UUID, capability_code: CapabilityCode):
     _require_management(request, recent_mfa=True)
     try:
         result = remove_capability_override(
@@ -485,7 +523,7 @@ def account_capability_override_remove(request, user_id: UUID, capability_code: 
             actor_session=request.auth_session,
             target_id=user_id,
             context=_context(request),
-            capability=capability_code,
+            capability=capability_code.value,
         )
     except RecentMFARequired as exc:
         raise APIError(403, "recent_mfa_required", "Recent MFA is required.") from exc
@@ -496,8 +534,9 @@ def account_capability_override_remove(request, user_id: UUID, capability_code: 
 
 @router.post(
     "/{user_id}/security/revoke-sessions",
-    response=RevocationResponse,
+    response=response_with_errors(RevocationResponse, 401, 403, 404, 422),
     auth=session_auth,
+    operation_id="accountsRevokeSessions",
     summary="Revoke all authentication sessions for a managed account",
 )
 def account_revoke_sessions(request, user_id: UUID):
@@ -518,8 +557,9 @@ def account_revoke_sessions(request, user_id: UUID):
 
 @router.post(
     "/{user_id}/security/revoke-trusted-sessions",
-    response=RevocationResponse,
+    response=response_with_errors(RevocationResponse, 401, 403, 404, 422),
     auth=session_auth,
+    operation_id="accountsRevokeTrustedSessions",
     summary="Revoke all trusted sessions for a managed account",
 )
 def account_revoke_trusted_sessions(request, user_id: UUID):
@@ -540,8 +580,9 @@ def account_revoke_trusted_sessions(request, user_id: UUID):
 
 @router.post(
     "/{user_id}/security/reset-mfa",
-    response=MFAResetResponse,
+    response=response_with_errors(MFAResetResponse, 401, 403, 404, 422),
     auth=session_auth,
+    operation_id="accountsResetMfa",
     summary="Reset MFA for a managed account",
 )
 def account_reset_mfa(request, user_id: UUID):
@@ -566,8 +607,9 @@ def account_reset_mfa(request, user_id: UUID):
 
 @router.get(
     "/{user_id}",
-    response=AccountDetailResponse,
+    response=response_with_errors(AccountDetailResponse, 401, 403, 404, 422),
     auth=session_auth,
+    operation_id="accountsGet",
     summary="Inspect a managed account",
 )
 def account_detail(request, user_id: UUID):

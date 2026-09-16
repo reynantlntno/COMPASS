@@ -16,7 +16,12 @@ class HealthResponse(Schema):
     checks: dict[str, str]
 
 
-@router.get("/live", response=HealthResponse, summary="Process liveness")
+@router.get(
+    "/live",
+    response=HealthResponse,
+    operation_id="healthLive",
+    summary="Process liveness",
+)
 def live(request):
     return {"status": "ok", "checks": {"application": "ok"}}
 
@@ -24,6 +29,7 @@ def live(request):
 @router.get(
     "/ready",
     response={200: HealthResponse, 503: HealthResponse},
+    operation_id="healthReady",
     summary="Dependency-backed readiness",
 )
 def ready(request):

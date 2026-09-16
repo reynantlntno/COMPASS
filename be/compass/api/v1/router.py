@@ -12,9 +12,15 @@ from compass.common.errors import register_exception_handlers
 api = NinjaAPI(
     title="COMPASS API",
     version="1.0.0",
-    description=(
-        "Authentication, account management, activity, and infrastructure endpoints for COMPASS."
-    ),
+    description="The version-one backend API for COMPASS.",
+    openapi_extra={
+        "tags": [
+            {"name": "health", "description": "Process liveness and dependency readiness."},
+            {"name": "auth", "description": "Cookie-based authentication and account security."},
+            {"name": "activity", "description": "Authenticated self-activity projections."},
+            {"name": "accounts", "description": "Capability-authorized account management."},
+        ]
+    },
     openapi_url="/openapi.json" if settings.API_DOCS_ENABLED else None,
     docs_url="/docs" if settings.API_DOCS_ENABLED else None,
 )
